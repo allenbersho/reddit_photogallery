@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Production build outputs
+dist/
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.*
+
+# OS and Editor files
+.DS_Store
+Thumbs.db
+*.log
+
+# Devvit local state
+.devvit/
