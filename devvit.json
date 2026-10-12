@@ -43,6 +43,18 @@
     "onPostCreate": "/internal/triggers/on-post-create",
     "onPostDelete": "/internal/triggers/on-post-delete"
   },
+  "scheduler": {
+    "tasks": {
+      "backfill": {
+        "endpoint": "/internal/scheduler/backfill",
+        "cron": "*/15 * * * *"
+      },
+      "reconcile": {
+        "endpoint": "/internal/scheduler/reconcile",
+        "cron": "0 */4 * * *"
+      }
+    }
+  },
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build"

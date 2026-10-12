@@ -168,3 +168,86 @@ export const buildGalleryItemFromPost = (
     lastVerifiedAt: Date.now(),
   };
 };
+
+export type RedditPostLike = {
+  id: string;
+  title: string;
+  url: string;
+  permalink?: string;
+  nsfw: boolean;
+  authorName?: string;
+  subredditName?: string;
+  createdAt?: Date | number;
+  thumbnail?: { url: string; width?: number; height?: number } | string;
+  flair?: { text?: string };
+  isSelf?: boolean;
+  removed?: boolean;
+  spam?: boolean;
+};
+
+export const buildGalleryItemFromRedditPost = (
+  post: RedditPostLike
+): GalleryItem | null => {
+  if (post.nsfw || post.removed || post.spam) {
+    return null;
+  }
+  const url = post.url?.toLowerCase() || '';
+  const isRedditHosted =
+    url.includes('i.redd.it') ||
+    url.includes('preview.redd.it') ||
+    url.includes('external-preview.redd.it');
+  const hasImageExtension =
+    url.endsWith('.jpg') ||
+    url.endsWith('.jpeg') ||
+    url.endsWith('.png') ||
+    url.endsWith('.webp') ||
+    url.endsWith('.gif');
+
+  if (!isRedditHosted && !hasImageExtension) {
+    return null;
+  }
+
+  let previewUrl: string | undefined;
+  if (typeof post.thumbnail === 'object' && post.thumbnail?.url) {
+    previewUrl = post.thumbnail.url;
+  } else if (
+    typeof post.thumbnail === 'string' &&
+    post.thumbnail.startsWith('http')
+  ) {
+    previewUrl = post.thumbnail;
+  }
+
+  let createdAtSec = Math.floor(Date.now() / 1000);
+  if (post.createdAt instanceof Date) {
+    createdAtSec = Math.floor(post.createdAt.getTime() / 1000);
+  } else if (typeof post.createdAt === 'number' && post.createdAt > 0) {
+    createdAtSec =
+      post.createdAt > 1e11
+        ? Math.floor(post.createdAt / 1000)
+        : post.createdAt;
+  }
+
+  const { topic, source } = deriveTopic(post.flair?.text);
+
+  return {
+    id: post.id,
+    permalink: post.permalink || `/comments/${post.id}`,
+    title: post.title || 'Untitled',
+    author: post.authorName || 'redditor',
+    subreddit: post.subredditName || 'community',
+    createdAt: createdAtSec,
+    media: {
+      url: post.url,
+      previewUrl,
+      width: 0,
+      height: 0,
+    },
+    topic,
+    topicSource: source,
+    isModHidden: false,
+    isNsfw: false,
+    isRemoved: false,
+    capturedAt: Date.now(),
+    lastVerifiedAt: Date.now(),
+  };
+};

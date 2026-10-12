@@ -16,9 +16,9 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 - [x] 1.2 Build the Redis data-access module (item store + time index + paging) (implemented src/server/data/galleryStore.ts and validated with 13 unit tests in galleryStore.test.ts)
 - [x] 1.3 Post-create trigger: capture image posts, skip NSFW/non-image (registered onPostCreate in devvit.json, implemented SFW image filter and topic inference in postCapture.ts, handled in triggers.ts)
 - [x] 1.4 Post-delete / removal handling (registered onPostDelete in devvit.json, cleans up Redis item store and indexes upon post deletion)
-- [ ] 1.5 Backfill scheduler job (batched, resumable)
-- [ ] 1.6 Reconcile scheduler job (drop deleted/removed items)
-- [ ] 1.7 Unit tests for the data-access module and capture logic
+- [x] 1.5 Backfill scheduler job (batched, resumable) (implemented src/server/scheduler/backfill.ts with batch size 25, Redis cursor persistence, and devvit.json scheduler task)
+- [x] 1.6 Reconcile scheduler job (drop deleted/removed items) (implemented src/server/scheduler/reconcile.ts with batch size 20, post verification against Reddit API, and automatic index purge)
+- [x] 1.7 Unit tests for the data-access module and capture logic (38 unit tests across store, post capture, triggers, and scheduler jobs)
 
 ## Milestone 2 — Topics and settings
 
