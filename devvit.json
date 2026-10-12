@@ -32,8 +32,44 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/example-form"
+      },
+      {
+        "label": "Hide from Gallery",
+        "description": "Hide this post from the community photo gallery",
+        "location": "post",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/mod-hide"
+      },
+      {
+        "label": "Unhide in Gallery",
+        "description": "Restore this post to the community photo gallery",
+        "location": "post",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/mod-unhide"
       }
     ]
+  },
+  "settings": {
+    "subreddit": {
+      "scienceFlairs": {
+        "type": "string",
+        "label": "Science Flairs",
+        "helpText": "Comma-separated keywords or flair names mapped to Science",
+        "defaultValue": "science, physics, biology, chemistry, astronomy, space"
+      },
+      "engineeringFlairs": {
+        "type": "string",
+        "label": "Engineering Flairs",
+        "helpText": "Comma-separated keywords or flair names mapped to Engineering",
+        "defaultValue": "engineering, tech, technology, robotics, coding, mechanical"
+      },
+      "artFlairs": {
+        "type": "string",
+        "label": "Art Flairs",
+        "helpText": "Comma-separated keywords or flair names mapped to Art",
+        "defaultValue": "art, photo, photography, design, painting, drawing"
+      }
+    }
   },
   "forms": {
     "exampleForm": "/internal/form/example-submit"

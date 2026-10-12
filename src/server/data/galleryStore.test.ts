@@ -6,6 +6,7 @@ import {
   getJobState,
   getTimelinePage,
   getTimelineSummary,
+  getTopicCounts,
   REDIS_KEYS,
   removeGalleryItem,
   saveGalleryItem,
@@ -359,6 +360,24 @@ describe('GalleryStore', () => {
       expect(page.items[0]?.id).toBe('t3_ok');
     });
 
+    it('allows viewing mod hidden items when includeHidden is true', async () => {
+      const normalItem = createSampleItem({ id: 't3_ok', createdAt: 2000 });
+      const hiddenItem = createSampleItem({
+        id: 't3_hidden',
+        createdAt: 3000,
+        isModHidden: true,
+      });
+
+      await saveGalleryItem(normalItem, mockRedis);
+      await saveGalleryItem(hiddenItem, mockRedis);
+
+      const page = await getTimelinePage(
+        { limit: 10, includeHidden: true },
+        mockRedis
+      );
+      expect(page.items).toHaveLength(2);
+    });
+
     it('filters timeline by topic', async () => {
       const scienceItem = createSampleItem({ id: 't3_sci', topic: 'science' });
       const artItem = createSampleItem({ id: 't3_art', topic: 'art' });
@@ -373,6 +392,31 @@ describe('GalleryStore', () => {
       const artPage = await getTimelinePage({ topic: 'art' }, mockRedis);
       expect(artPage.items).toHaveLength(1);
       expect(artPage.items[0]?.id).toBe('t3_art');
+    });
+
+    it('returns topic counts across all topics', async () => {
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_s1', topic: 'science' }),
+        mockRedis
+      );
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_s2', topic: 'science' }),
+        mockRedis
+      );
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_e1', topic: 'engineering' }),
+        mockRedis
+      );
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_a1', topic: 'art' }),
+        mockRedis
+      );
+
+      const counts = await getTopicCounts(mockRedis);
+      expect(counts.science).toBe(2);
+      expect(counts.engineering).toBe(1);
+      expect(counts.art).toBe(1);
+      expect(counts.other).toBe(0);
     });
   });
 

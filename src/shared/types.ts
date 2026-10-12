@@ -40,6 +40,12 @@ export type GalleryItem = {
   lastVerifiedAt: number; // Reconciliation epoch timestamp in milliseconds
 };
 
+export type TopicMappingRules = {
+  scienceKeywords: string[];
+  engineeringKeywords: string[];
+  artKeywords: string[];
+};
+
 export type TimelineCursor = {
   score: number;
   id: string;
@@ -51,6 +57,7 @@ export type TimelineQueryParams = {
   topic?: Topic;
   placeType?: 'country' | 'region' | 'city' | 'unplaced';
   placeKey?: string;
+  includeHidden?: boolean;
 };
 
 export type TimelinePage = {

@@ -3,8 +3,10 @@ import type {
   GalleryItem,
   MediaAsset,
   Topic,
+  TopicMappingRules,
   TopicSource,
 } from '../../shared/types.js';
+import { DEFAULT_TOPIC_RULES } from './topicSettings.js';
 
 export const isEligibleImagePost = (post?: PostV2): boolean => {
   if (!post) {
@@ -84,41 +86,24 @@ export const extractMediaAsset = (post: PostV2): MediaAsset | null => {
 };
 
 export const deriveTopic = (
-  flairText?: string
+  flairText?: string,
+  rules: TopicMappingRules = DEFAULT_TOPIC_RULES
 ): { topic: Topic; source: TopicSource } => {
   if (!flairText) {
     return { topic: 'other', source: 'default' };
   }
 
   const normalized = flairText.toLowerCase();
-  if (
-    normalized.includes('science') ||
-    normalized.includes('physics') ||
-    normalized.includes('chem') ||
-    normalized.includes('bio') ||
-    normalized.includes('space') ||
-    normalized.includes('astronomy')
-  ) {
+
+  if (rules.scienceKeywords.some((kw) => normalized.includes(kw))) {
     return { topic: 'science', source: 'flair' };
   }
 
-  if (
-    normalized.includes('engineer') ||
-    normalized.includes('tech') ||
-    normalized.includes('robot') ||
-    normalized.includes('mechanic') ||
-    normalized.includes('code')
-  ) {
+  if (rules.engineeringKeywords.some((kw) => normalized.includes(kw))) {
     return { topic: 'engineering', source: 'flair' };
   }
 
-  if (
-    normalized.includes('art') ||
-    normalized.includes('photo') ||
-    normalized.includes('design') ||
-    normalized.includes('paint') ||
-    normalized.includes('draw')
-  ) {
+  if (rules.artKeywords.some((kw) => normalized.includes(kw))) {
     return { topic: 'art', source: 'flair' };
   }
 
@@ -128,7 +113,8 @@ export const deriveTopic = (
 export const buildGalleryItemFromPost = (
   post: PostV2,
   authorName?: string,
-  subredditName?: string
+  subredditName?: string,
+  rules?: TopicMappingRules
 ): GalleryItem | null => {
   if (!isEligibleImagePost(post)) {
     return null;
@@ -149,7 +135,7 @@ export const buildGalleryItemFromPost = (
   }
 
   const flair = post.linkFlair?.text;
-  const { topic, source } = deriveTopic(flair);
+  const { topic, source } = deriveTopic(flair, rules);
 
   return {
     id: post.id,
@@ -186,7 +172,8 @@ export type RedditPostLike = {
 };
 
 export const buildGalleryItemFromRedditPost = (
-  post: RedditPostLike
+  post: RedditPostLike,
+  rules?: TopicMappingRules
 ): GalleryItem | null => {
   if (post.nsfw || post.removed || post.spam) {
     return null;
@@ -227,7 +214,7 @@ export const buildGalleryItemFromRedditPost = (
         : post.createdAt;
   }
 
-  const { topic, source } = deriveTopic(post.flair?.text);
+  const { topic, source } = deriveTopic(post.flair?.text, rules);
 
   return {
     id: post.id,

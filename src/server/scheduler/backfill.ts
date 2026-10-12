@@ -4,6 +4,10 @@ import {
   type RedditPostLike,
 } from '../core/postCapture.js';
 import {
+  loadTopicRules,
+  type SettingsClientContract,
+} from '../core/topicSettings.js';
+import {
   getJobState,
   saveGalleryItem,
   setJobState,
@@ -38,11 +42,13 @@ const getSubredditNameSafely = (): string | undefined => {
 export const runBackfillJob = async (
   redisClient?: RedisClientContract,
   redditClient: RedditClientForBackfill = reddit,
-  subredditName?: string
+  subredditName?: string,
+  settingsClient?: SettingsClientContract
 ): Promise<BackfillResult> => {
   const BATCH_SIZE = 25;
   const cursor = await getJobState('backfill_cursor', redisClient);
   const targetSubreddit = subredditName || getSubredditNameSafely();
+  const rules = await loadTopicRules(settingsClient);
 
   const posts = await redditClient
     .getNewPosts({
@@ -63,7 +69,7 @@ export const runBackfillJob = async (
 
   let indexedCount = 0;
   for (const post of posts) {
-    const item = buildGalleryItemFromRedditPost(post);
+    const item = buildGalleryItemFromRedditPost(post, rules);
     if (item) {
       await saveGalleryItem(item, redisClient);
       indexedCount += 1;

@@ -150,6 +150,22 @@ describe('postCapture', () => {
       expect(deriveTopic(undefined).topic).toBe('other');
       expect(deriveTopic(undefined).source).toBe('default');
     });
+
+    it('applies custom topic mapping rules when provided', () => {
+      const customRules = {
+        scienceKeywords: ['quantum', 'lab'],
+        engineeringKeywords: ['hardware'],
+        artKeywords: ['sketch'],
+      };
+
+      expect(deriveTopic('Quantum Leap', customRules).topic).toBe('science');
+      expect(deriveTopic('New Hardware Demo', customRules).topic).toBe(
+        'engineering'
+      );
+      expect(deriveTopic('Pencil Sketch', customRules).topic).toBe('art');
+      // Default keyword that is not in custom rules falls back to other
+      expect(deriveTopic('Space Exploration', customRules).topic).toBe('other');
+    });
   });
 
   describe('buildGalleryItemFromPost', () => {
@@ -174,6 +190,30 @@ describe('postCapture', () => {
       expect(item?.media.url).toBe('https://i.redd.it/nebula.png');
       expect(item?.isNsfw).toBe(false);
       expect(item?.createdAt).toBe(1700000000);
+    });
+
+    it('applies custom topic rules when building gallery item', () => {
+      const post = createBasePost({
+        linkFlair: {
+          text: 'Laser Optics Lab',
+          templateId: 'flair_custom',
+          textColor: 'dark',
+          backgroundColor: '#fff',
+          cssClass: '',
+        },
+      });
+      const customRules = {
+        scienceKeywords: ['optics'],
+        engineeringKeywords: [],
+        artKeywords: [],
+      };
+      const item = buildGalleryItemFromPost(
+        post,
+        'researcher',
+        'physics',
+        customRules
+      );
+      expect(item?.topic).toBe('science');
     });
 
     it('returns null for ineligible posts', () => {

@@ -8,6 +8,10 @@ import { context, redis } from '@devvit/web/server';
 import { createPost } from '../core/post.js';
 import { buildGalleryItemFromPost } from '../core/postCapture.js';
 import {
+  loadTopicRules,
+  type SettingsClientContract,
+} from '../core/topicSettings.js';
+import {
   removeGalleryItem,
   saveGalleryItem,
   type RedisClientContract,
@@ -19,7 +23,8 @@ export type TriggerResult = {
 };
 
 export const createTriggersRouter = (
-  redisClient: RedisClientContract = redis
+  redisClient: RedisClientContract = redis,
+  settingsClient?: SettingsClientContract
 ): Hono => {
   const router = new Hono();
 
@@ -60,10 +65,12 @@ export const createTriggersRouter = (
         );
       }
 
+      const rules = await loadTopicRules(settingsClient);
       const galleryItem = buildGalleryItemFromPost(
         input.post,
         input.author?.name,
-        input.subreddit?.name
+        input.subreddit?.name,
+        rules
       );
 
       if (!galleryItem) {

@@ -336,9 +336,9 @@ export const getTimelinePage = async (
   const ids = rangeResults.map((r) => r.member);
   const allItems = await getGalleryItems(ids, client);
 
-  // Exclude hidden or removed items from client view
+  // Exclude hidden or removed items from client view unless includeHidden is true
   const visibleItems = allItems.filter(
-    (i) => !i.isModHidden && !i.isRemoved && !i.isNsfw
+    (i) => (params.includeHidden || !i.isModHidden) && !i.isRemoved && !i.isNsfw
   );
 
   const nextOffset = offset + limit;
@@ -416,4 +416,16 @@ export const setJobState = async (
   client: RedisClientContract = redis
 ): Promise<void> => {
   await client.hSet(REDIS_KEYS.jobState(), { [field]: value });
+};
+
+export const getTopicCounts = async (
+  client: RedisClientContract = redis
+): Promise<Record<Topic, number>> => {
+  const [science, engineering, art, other] = await Promise.all([
+    client.zCard(REDIS_KEYS.idxTopic('science')),
+    client.zCard(REDIS_KEYS.idxTopic('engineering')),
+    client.zCard(REDIS_KEYS.idxTopic('art')),
+    client.zCard(REDIS_KEYS.idxTopic('other')),
+  ]);
+  return { science, engineering, art, other };
 };

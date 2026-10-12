@@ -22,9 +22,9 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 
 ## Milestone 2 — Topics and settings
 
-- [ ] 2.1 Moderator settings: topic mapping (flair -> Science/Engineering/Art)
-- [ ] 2.2 Topic indexes and filter support in the data layer
-- [ ] 2.3 Moderator action: hide / unhide an item
+- [x] 2.1 Moderator settings: topic mapping (flair -> Science/Engineering/Art) (defined in devvit.json settings.subreddit with defaults, parsed and loaded in src/server/core/topicSettings.ts)
+- [x] 2.2 Topic indexes and filter support in the data layer (custom rules passed to deriveTopic in triggers and backfill, Redis topic sets and getTopicCounts in galleryStore.ts)
+- [x] 2.3 Moderator action: hide / unhide an item (post-level menu items /mod-hide & /mod-unhide with UI toast response, plus moderator-authenticated API endpoints)
 
 ## Milestone 3 — Location
 
