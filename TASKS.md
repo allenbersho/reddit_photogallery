@@ -12,8 +12,8 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 
 ## Milestone 1 — Data capture
 
-- [ ] 1.1 Define shared types for gallery items, places and topics
-- [ ] 1.2 Build the Redis data-access module (item store + time index + paging)
+- [x] 1.1 Define shared types for gallery items, places and topics (defined in src/shared/types.ts and re-exported in src/shared/index.ts)
+- [x] 1.2 Build the Redis data-access module (item store + time index + paging) (implemented src/server/data/galleryStore.ts and validated with 13 unit tests in galleryStore.test.ts)
 - [ ] 1.3 Post-create trigger: capture image posts, skip NSFW/non-image
 - [ ] 1.4 Post-delete / removal handling
 - [ ] 1.5 Backfill scheduler job (batched, resumable)
