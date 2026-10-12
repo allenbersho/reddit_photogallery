@@ -5,10 +5,10 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 
 ## Milestone 0 — Setup
 
-- [ ] 0.1 Create the Devvit Web project from the official React template (follow the current quickstart at developers.reddit.com)
+- [x] 0.1 Create the Devvit Web project from the official React template (scaffolded from official `@devvit/web` React starter with Hono, Tailwind CSS 4, and Vite)
 - [ ] 0.2 Create a private test subreddit (under 200 members), turn off the Reputation safety filter, run playtest successfully
-- [ ] 0.3 Add folder structure (client / server / shared), strict TypeScript, ESLint, Prettier, Vitest
-- [ ] 0.4 Initialize git, first commit, .gitignore, README with run instructions
+- [x] 0.3 Add folder structure (client / server / shared), strict TypeScript, ESLint, Prettier, Vitest (configured composite tsconfigs in tools/, ESLint 10, Prettier, and Vitest starter test)
+- [x] 0.4 Initialize git, first commit, .gitignore, README with run instructions (git repo initialized, comprehensive .gitignore added, initial commit created, README documented)
 
 ## Milestone 1 — Data capture
 
