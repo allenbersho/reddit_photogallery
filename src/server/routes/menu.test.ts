@@ -208,4 +208,63 @@ describe('Menu actions router', () => {
       expect(body.showToast).toBe('Post is not in the photo gallery');
     });
   });
+
+  describe('POST /tag-location-open', () => {
+    it('returns showForm with tagLocationForm specification and prefilled data', async () => {
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_target_loc',
+          place: {
+            raw: 'Kyoto, Japan',
+            country: 'JP',
+            region: 'Kyoto',
+            city: 'Kyoto',
+            status: 'poster-tagged',
+          },
+          takenAt: 1700000000,
+        }),
+        mockRedis
+      );
+
+      const res = await router.request('/tag-location-open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thingId: 't3_target_loc' }),
+      });
+
+      expect(res.status).toBe(200);
+      const body: {
+        showForm?: {
+          name: string;
+          form: {
+            title: string;
+            fields: Array<{ name: string; defaultValue?: string }>;
+          };
+          data?: { postId: string };
+        };
+      } = await res.json();
+
+      expect(body.showForm).toBeDefined();
+      expect(body.showForm?.name).toBe('tagLocationForm');
+      expect(body.showForm?.data?.postId).toBe('t3_target_loc');
+      const locField = body.showForm?.form.fields.find(
+        (f) => f.name === 'location'
+      );
+      expect(locField?.defaultValue).toBe('Kyoto, Japan');
+    });
+
+    it('returns 400 when missing target post ID', async () => {
+      const res = await router.request('/tag-location-open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(400);
+      const body: { showToast?: string } = await res.json();
+      expect(body.showToast).toBe(
+        'Unable to open form: missing target post ID'
+      );
+    });
+  });
 });

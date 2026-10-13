@@ -4,14 +4,18 @@ import {
   getGalleryItem,
   getGalleryItems,
   getJobState,
+  getPlacesHierarchy,
+  getPlacesSummary,
   getTimelinePage,
   getTimelineSummary,
   getTopicCounts,
+  getUnplacedCount,
   REDIS_KEYS,
   removeGalleryItem,
   saveGalleryItem,
   setGalleryItemModHidden,
   setJobState,
+  updateGalleryItemLocation,
   type RedisClientContract,
 } from './galleryStore.js';
 
@@ -428,6 +432,135 @@ describe('GalleryStore', () => {
 
       const missing = await getJobState('unknown_job', mockRedis);
       expect(missing).toBeNull();
+    });
+  });
+
+  describe('updateGalleryItemLocation', () => {
+    it('updates an unplaced item with new location and indexes it in places', async () => {
+      const item = createSampleItem({ id: 't3_p1', place: undefined });
+      await saveGalleryItem(item, mockRedis);
+
+      const unplacedBefore = await getUnplacedCount(mockRedis);
+      expect(unplacedBefore).toBe(1);
+
+      const updated = await updateGalleryItemLocation(
+        't3_p1',
+        {
+          raw: 'Tokyo, Japan',
+          country: 'JP',
+          region: 'Tokyo',
+          city: 'Tokyo',
+          latitude: 35.6762,
+          longitude: 139.6503,
+          status: 'poster-tagged',
+        },
+        1700005000,
+        mockRedis
+      );
+
+      expect(updated).not.toBeNull();
+      expect(updated?.place?.city).toBe('Tokyo');
+      expect(updated?.takenAt).toBe(1700005000);
+
+      const unplacedAfter = await getUnplacedCount(mockRedis);
+      expect(unplacedAfter).toBe(0);
+
+      const countryCount = await mockRedis.zCard(REDIS_KEYS.idxCountry('JP'));
+      const cityCount = await mockRedis.zCard(
+        REDIS_KEYS.idxCity('JP', 'Tokyo', 'Tokyo')
+      );
+      expect(countryCount).toBe(1);
+      expect(cityCount).toBe(1);
+    });
+
+    it('moves an item from one place to another updating counts and indexes', async () => {
+      const item = createSampleItem({
+        id: 't3_p2',
+        place: {
+          raw: 'Geneva, Switzerland',
+          country: 'CH',
+          region: 'Geneva',
+          city: 'Geneva',
+          status: 'poster-tagged',
+        },
+      });
+      await saveGalleryItem(item, mockRedis);
+
+      const chCountBefore = await mockRedis.zCard(REDIS_KEYS.idxCountry('CH'));
+      expect(chCountBefore).toBe(1);
+
+      await updateGalleryItemLocation(
+        't3_p2',
+        {
+          raw: 'Paris, France',
+          country: 'FR',
+          region: 'Ile-de-France',
+          city: 'Paris',
+          status: 'mod-verified',
+        },
+        undefined,
+        mockRedis
+      );
+
+      const chCountAfter = await mockRedis.zCard(REDIS_KEYS.idxCountry('CH'));
+      const frCountAfter = await mockRedis.zCard(REDIS_KEYS.idxCountry('FR'));
+      expect(chCountAfter).toBe(0);
+      expect(frCountAfter).toBe(1);
+    });
+
+    it('returns null when updating non-existent item', async () => {
+      const result = await updateGalleryItemLocation(
+        't3_nonexistent',
+        undefined,
+        undefined,
+        mockRedis
+      );
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('Places Hierarchy and Summary', () => {
+    it('generates nested hierarchy of country > region > city with counts and covers', async () => {
+      const item1 = createSampleItem({
+        id: 't3_t1',
+        place: {
+          raw: 'Tokyo, Japan',
+          country: 'JP',
+          region: 'Tokyo',
+          city: 'Tokyo',
+          status: 'poster-tagged',
+        },
+      });
+      const item2 = createSampleItem({
+        id: 't3_t2',
+        place: {
+          raw: 'Osaka, Japan',
+          country: 'JP',
+          region: 'Osaka',
+          city: 'Osaka',
+          status: 'poster-tagged',
+        },
+      });
+      const item3 = createSampleItem({
+        id: 't3_unp',
+        place: undefined,
+      });
+
+      await saveGalleryItem(item1, mockRedis);
+      await saveGalleryItem(item2, mockRedis);
+      await saveGalleryItem(item3, mockRedis);
+
+      const directHierarchy = await getPlacesHierarchy(mockRedis);
+      expect(directHierarchy).toHaveLength(1);
+
+      const summary = await getPlacesSummary(mockRedis);
+      expect(summary.unplacedCount).toBe(1);
+      expect(summary.hierarchy).toHaveLength(1);
+
+      const japan = summary.hierarchy[0];
+      expect(japan?.name).toBe('Japan');
+      expect(japan?.count).toBe(2);
+      expect(japan?.children).toHaveLength(2); // Tokyo and Osaka regions
     });
   });
 });

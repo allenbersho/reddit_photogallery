@@ -216,6 +216,53 @@ describe('postCapture', () => {
       expect(item?.topic).toBe('science');
     });
 
+    it('extracts location from flair and marks as poster-tagged', () => {
+      const post = createBasePost({
+        linkFlair: {
+          text: 'Tokyo, Japan',
+          templateId: 'flair_loc',
+          textColor: 'dark',
+          backgroundColor: '#fff',
+          cssClass: '',
+        },
+      });
+      const item = buildGalleryItemFromPost(post, 'traveler', 'photography');
+      expect(item?.place).toBeDefined();
+      expect(item?.place?.city).toBe('Tokyo');
+      expect(item?.place?.country).toBe('JP');
+      expect(item?.place?.status).toBe('poster-tagged');
+    });
+
+    it('extracts location when flair has a prefix like Location: Paris, France', () => {
+      const post = createBasePost({
+        linkFlair: {
+          text: 'Location: Paris, France',
+          templateId: 'flair_loc',
+          textColor: 'dark',
+          backgroundColor: '#fff',
+          cssClass: '',
+        },
+      });
+      const item = buildGalleryItemFromPost(post, 'traveler', 'art');
+      expect(item?.place).toBeDefined();
+      expect(item?.place?.city).toBe('Paris');
+      expect(item?.place?.country).toBe('FR');
+    });
+
+    it('leaves place undefined when flair does not match a known place', () => {
+      const post = createBasePost({
+        linkFlair: {
+          text: 'General Discussion',
+          templateId: 'flair_gen',
+          textColor: 'dark',
+          backgroundColor: '#fff',
+          cssClass: '',
+        },
+      });
+      const item = buildGalleryItemFromPost(post, 'user', 'science');
+      expect(item?.place).toBeUndefined();
+    });
+
     it('returns null for ineligible posts', () => {
       const nsfwPost = createBasePost({ nsfw: true });
       expect(buildGalleryItemFromPost(nsfwPost)).toBeNull();

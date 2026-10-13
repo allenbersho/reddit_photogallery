@@ -91,3 +91,15 @@ export type PlaceHierarchyNode = {
   coverPostId?: string;
   children?: PlaceHierarchyNode[];
 };
+
+export type PlacesSummary = {
+  hierarchy: PlaceHierarchyNode[];
+  unplacedCount: number;
+  totalPlacedCount: number;
+};
+
+export type TagLocationRequest = {
+  postId: string;
+  location: string;
+  takenDate?: string;
+};

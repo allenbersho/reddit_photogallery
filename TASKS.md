@@ -28,11 +28,11 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 
 ## Milestone 3 — Location
 
-- [ ] 3.1 Bundle a small free gazetteer (cities with country/region/coordinates) with attribution notes
-- [ ] 3.2 Place resolver with ambiguity handling and unit tests
-- [ ] 3.3 Location capture via flair mapping
-- [ ] 3.4 Poster/mod tagging form for location (and optional "taken on" date)
-- [ ] 3.5 Place indexes (country/region/city), hierarchy with counts and cover item, "Unplaced" bucket
+- [x] 3.1 Bundle a small free gazetteer (cities with country/region/coordinates) with attribution notes (curated global cities and scientific landmarks with GeoNames CC BY 4.0 attribution in src/server/data/gazetteer.ts)
+- [x] 3.2 Place resolver with ambiguity handling and unit tests (implemented in src/server/core/placeResolver.ts with city/region/country matching, alias resolution, and ambiguity detection; tested with 13 unit tests)
+- [x] 3.3 Location capture via flair mapping (automatic location extraction in postCapture.ts marking items as poster-tagged from location flairs)
+- [x] 3.4 Poster/mod tagging form for location and optional "taken on" date (tagLocationForm and Tag Location post menu item in devvit.json, handled in forms.ts and menu.ts with author/mod validation)
+- [x] 3.5 Place indexes (country/region/city), hierarchy with counts and cover item, "Unplaced" bucket (updateGalleryItemLocation, getPlacesHierarchy, and getPlacesSummary in galleryStore.ts)
 
 ## Milestone 4 — Internal API
 

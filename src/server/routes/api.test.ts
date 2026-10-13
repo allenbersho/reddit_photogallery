@@ -206,4 +206,78 @@ describe('API router moderator actions', () => {
       expect(updated?.isModHidden).toBe(false);
     });
   });
+
+  describe('GET /gallery/places/hierarchy and /gallery/places/summary', () => {
+    it('returns places hierarchy and summary from Redis', async () => {
+      const item = createSampleItem({
+        id: 't3_tokyo',
+        place: {
+          raw: 'Tokyo, Japan',
+          country: 'JP',
+          region: 'Tokyo',
+          city: 'Tokyo',
+          status: 'poster-tagged',
+        },
+      });
+      await saveGalleryItem(item, mockRedis);
+
+      const router = createApiRouter(mockRedis);
+
+      const hierarchyRes = await router.request('/gallery/places/hierarchy');
+      expect(hierarchyRes.status).toBe(200);
+      const hierarchy: Array<{ name: string; count: number }> =
+        await hierarchyRes.json();
+      expect(hierarchy).toHaveLength(1);
+      expect(hierarchy[0]?.name).toBe('Japan');
+
+      const summaryRes = await router.request('/gallery/places/summary');
+      expect(summaryRes.status).toBe(200);
+      const summary: { unplacedCount: number; hierarchy: unknown[] } =
+        await summaryRes.json();
+      expect(summary.unplacedCount).toBe(0);
+      expect(summary.hierarchy).toHaveLength(1);
+    });
+  });
+
+  describe('POST /gallery/:id/location', () => {
+    it('updates location when caller is verified moderator', async () => {
+      await saveGalleryItem(createSampleItem({ id: 't3_loc_post' }), mockRedis);
+      const router = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(true)
+      );
+
+      const res = await router.request('/gallery/t3_loc_post/location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: 'San Francisco, CA',
+          takenDate: '2024-06-01',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body: { success: boolean; item: GalleryItem } = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.item.place?.city).toBe('San Francisco');
+      expect(body.item.place?.country).toBe('US');
+      expect(body.item.place?.status).toBe('mod-verified');
+    });
+
+    it('denies access if caller is neither author nor moderator', async () => {
+      await saveGalleryItem(createSampleItem({ id: 't3_loc_post' }), mockRedis);
+      const router = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false)
+      );
+
+      const res = await router.request('/gallery/t3_loc_post/location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location: 'San Francisco, CA' }),
+      });
+
+      expect(res.status).toBe(403);
+    });
+  });
 });

@@ -5,8 +5,19 @@ import type {
   IncrementResponse,
   InitResponse,
 } from '../../shared/api.js';
+import type {
+  GalleryItem,
+  PlaceHierarchyNode,
+  PlacesSummary,
+  PlaceStatus,
+} from '../../shared/types.js';
+import { resolvePlace, toPlaceLocation } from '../core/placeResolver.js';
 import {
+  getGalleryItem,
+  getPlacesHierarchy,
+  getPlacesSummary,
   setGalleryItemModHidden,
+  updateGalleryItemLocation,
   type RedisClientContract,
 } from '../data/galleryStore.js';
 
@@ -240,6 +251,110 @@ export const createApiRouter = (
         id,
         isModHidden: false,
       },
+      200
+    );
+  });
+
+  // Places hierarchy
+  router.get('/gallery/places/hierarchy', async (c) => {
+    const hierarchy = await getPlacesHierarchy(redisClient);
+    return c.json<PlaceHierarchyNode[]>(hierarchy, 200);
+  });
+
+  // Places summary (hierarchy + unplaced count)
+  router.get('/gallery/places/summary', async (c) => {
+    const summary = await getPlacesSummary(redisClient);
+    return c.json<PlacesSummary>(summary, 200);
+  });
+
+  // Tag or update location for a gallery item
+  router.post('/gallery/:id/location', async (c) => {
+    const id = c.req.param('id');
+    const body = await c.req.json<{ location?: string; takenDate?: string }>();
+    const locationInput = body.location?.trim() || '';
+
+    if (!locationInput) {
+      return c.json<ErrorResponse>(
+        { status: 'error', message: 'Location is required' },
+        400
+      );
+    }
+
+    const item = await getGalleryItem(id, redisClient);
+    if (!item) {
+      return c.json<ErrorResponse>(
+        { status: 'error', message: 'Gallery item not found' },
+        404
+      );
+    }
+
+    const username = await getCallerUsername();
+    const subredditName = getSubredditNameSafely();
+    const isAuthor =
+      username !== undefined &&
+      item.author.toLowerCase() === username.toLowerCase();
+    const isMod = await isModerator(username, subredditName);
+
+    if (!isAuthor && !isMod) {
+      return c.json<ErrorResponse>(
+        {
+          status: 'error',
+          message: 'Only the author or moderators can tag this location',
+        },
+        403
+      );
+    }
+
+    const resolved = resolvePlace(locationInput);
+    if (resolved.status === 'unresolved') {
+      return c.json<ErrorResponse>(
+        {
+          status: 'error',
+          message:
+            'Could not resolve place. Try "City, Country" (e.g. Tokyo, Japan)',
+        },
+        400
+      );
+    }
+
+    if (resolved.status === 'ambiguous') {
+      return c.json<ErrorResponse>(
+        {
+          status: 'error',
+          message:
+            'Ambiguous place. Please include country or region (e.g. Cambridge, UK or Cambridge, US)',
+        },
+        400
+      );
+    }
+
+    const placeStatus: PlaceStatus = isMod ? 'mod-verified' : 'poster-tagged';
+    const place = toPlaceLocation(resolved.place, placeStatus);
+
+    let takenAtEpoch: number | undefined;
+    if (body.takenDate && /^\d{4}-\d{2}-\d{2}$/.test(body.takenDate)) {
+      const parsedEpoch = Date.parse(body.takenDate);
+      if (!Number.isNaN(parsedEpoch)) {
+        takenAtEpoch = Math.floor(parsedEpoch / 1000);
+      }
+    }
+
+    const updated = await updateGalleryItemLocation(
+      id,
+      place,
+      takenAtEpoch,
+      redisClient
+    );
+
+    if (!updated) {
+      return c.json<ErrorResponse>(
+        { status: 'error', message: 'Failed to update location' },
+        500
+      );
+    }
+
+    return c.json<{ success: boolean; item: GalleryItem }>(
+      { success: true, item: updated },
       200
     );
   });

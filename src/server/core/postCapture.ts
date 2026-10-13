@@ -2,10 +2,12 @@ import type { PostV2 } from '@devvit/protos/json/devvit/reddit/v2alpha/postv2.js
 import type {
   GalleryItem,
   MediaAsset,
+  PlaceLocation,
   Topic,
   TopicMappingRules,
   TopicSource,
 } from '../../shared/types.js';
+import { resolvePlace, toPlaceLocation } from './placeResolver.js';
 import { DEFAULT_TOPIC_RULES } from './topicSettings.js';
 
 export const isEligibleImagePost = (post?: PostV2): boolean => {
@@ -110,6 +112,19 @@ export const deriveTopic = (
   return { topic: 'other', source: 'flair' };
 };
 
+export const extractLocationFromFlair = (
+  flairText?: string
+): PlaceLocation | undefined => {
+  if (!flairText) {
+    return undefined;
+  }
+  const res = resolvePlace(flairText);
+  if (res.status === 'resolved') {
+    return toPlaceLocation(res.place, 'poster-tagged');
+  }
+  return undefined;
+};
+
 export const buildGalleryItemFromPost = (
   post: PostV2,
   authorName?: string,
@@ -136,8 +151,9 @@ export const buildGalleryItemFromPost = (
 
   const flair = post.linkFlair?.text;
   const { topic, source } = deriveTopic(flair, rules);
+  const place = extractLocationFromFlair(flair);
 
-  return {
+  const item: GalleryItem = {
     id: post.id,
     permalink: post.permalink || `/comments/${post.id}`,
     title: post.title || 'Untitled',
@@ -153,6 +169,12 @@ export const buildGalleryItemFromPost = (
     capturedAt: Date.now(),
     lastVerifiedAt: Date.now(),
   };
+
+  if (place) {
+    item.place = place;
+  }
+
+  return item;
 };
 
 export type RedditPostLike = {
@@ -215,8 +237,9 @@ export const buildGalleryItemFromRedditPost = (
   }
 
   const { topic, source } = deriveTopic(post.flair?.text, rules);
+  const place = extractLocationFromFlair(post.flair?.text);
 
-  return {
+  const item: GalleryItem = {
     id: post.id,
     permalink: post.permalink || `/comments/${post.id}`,
     title: post.title || 'Untitled',
@@ -237,4 +260,10 @@ export const buildGalleryItemFromRedditPost = (
     capturedAt: Date.now(),
     lastVerifiedAt: Date.now(),
   };
+
+  if (place) {
+    item.place = place;
+  }
+
+  return item;
 };

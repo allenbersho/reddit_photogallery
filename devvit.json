@@ -46,6 +46,13 @@
         "location": "post",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/mod-unhide"
+      },
+      {
+        "label": "Tag Location",
+        "description": "Tag or update the location for this gallery item",
+        "location": "post",
+        "forUserType": "user",
+        "endpoint": "/internal/menu/tag-location-open"
       }
     ]
   },
@@ -68,11 +75,18 @@
         "label": "Art Flairs",
         "helpText": "Comma-separated keywords or flair names mapped to Art",
         "defaultValue": "art, photo, photography, design, painting, drawing"
+      },
+      "locationFlairs": {
+        "type": "string",
+        "label": "Location Flairs",
+        "helpText": "Comma-separated keywords or prefixes used for location flairs",
+        "defaultValue": "location, place, taken in, shot in, photo in"
       }
     }
   },
   "forms": {
-    "exampleForm": "/internal/form/example-submit"
+    "exampleForm": "/internal/form/example-submit",
+    "tagLocationForm": "/internal/form/tag-location"
   },
   "triggers": {
     "onAppInstall": "/internal/triggers/on-app-install",

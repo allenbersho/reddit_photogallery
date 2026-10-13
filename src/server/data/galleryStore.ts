@@ -1,12 +1,16 @@
 import { redis } from '@devvit/web/server';
 import type {
   GalleryItem,
+  PlaceHierarchyNode,
+  PlaceLocation,
+  PlacesSummary,
   TimelinePage,
   TimelineQueryParams,
   TimelineSummary,
   Topic,
   YearSummary,
 } from '../../shared/types.js';
+import { COUNTRIES } from './gazetteer.js';
 
 // Minimal Redis interface matching Devvit's redis client capabilities
 export type RedisClientContract = {
@@ -428,4 +432,243 @@ export const getTopicCounts = async (
     client.zCard(REDIS_KEYS.idxTopic('other')),
   ]);
   return { science, engineering, art, other };
+};
+
+export const updateGalleryItemLocation = async (
+  id: string,
+  newPlace: PlaceLocation | undefined,
+  takenAt?: number,
+  client: RedisClientContract = redis
+): Promise<GalleryItem | null> => {
+  const item = await getGalleryItem(id, client);
+  if (!item) {
+    return null;
+  }
+
+  // 1. Remove from old place index
+  if (item.place) {
+    const cKey = item.place.country.trim().toLowerCase();
+    const rKey = `${cKey}:${item.place.region.trim().toLowerCase()}`;
+    const cityKey = `${rKey}:${item.place.city.trim().toLowerCase()}`;
+
+    await client.zRem(REDIS_KEYS.idxCountry(item.place.country), [id]);
+    if (item.place.region) {
+      await client.zRem(
+        REDIS_KEYS.idxRegion(item.place.country, item.place.region),
+        [id]
+      );
+    }
+    if (item.place.city) {
+      await client.zRem(
+        REDIS_KEYS.idxCity(
+          item.place.country,
+          item.place.region,
+          item.place.city
+        ),
+        [id]
+      );
+    }
+
+    await client.hIncrBy(REDIS_KEYS.placesCounts(), cKey, -1);
+    if (item.place.region) {
+      await client.hIncrBy(REDIS_KEYS.placesCounts(), rKey, -1);
+    }
+    if (item.place.city) {
+      await client.hIncrBy(REDIS_KEYS.placesCounts(), cityKey, -1);
+    }
+  } else {
+    await client.zRem(REDIS_KEYS.idxUnplaced(), [id]);
+  }
+
+  // 2. Add to new place index
+  if (newPlace) {
+    const cKey = newPlace.country.trim().toLowerCase();
+    const rKey = `${cKey}:${newPlace.region.trim().toLowerCase()}`;
+    const cityKey = `${rKey}:${newPlace.city.trim().toLowerCase()}`;
+
+    await client.zAdd(REDIS_KEYS.idxCountry(newPlace.country), {
+      member: id,
+      score: item.createdAt,
+    });
+    if (newPlace.region) {
+      await client.zAdd(
+        REDIS_KEYS.idxRegion(newPlace.country, newPlace.region),
+        { member: id, score: item.createdAt }
+      );
+    }
+    if (newPlace.city) {
+      await client.zAdd(
+        REDIS_KEYS.idxCity(newPlace.country, newPlace.region, newPlace.city),
+        { member: id, score: item.createdAt }
+      );
+    }
+
+    await client.hIncrBy(REDIS_KEYS.placesCounts(), cKey, 1);
+    if (newPlace.region) {
+      await client.hIncrBy(REDIS_KEYS.placesCounts(), rKey, 1);
+    }
+    if (newPlace.city) {
+      await client.hIncrBy(REDIS_KEYS.placesCounts(), cityKey, 1);
+    }
+
+    const existingCover = await client.hGet(REDIS_KEYS.placesCovers(), cKey);
+    if (!existingCover) {
+      await client.hSet(REDIS_KEYS.placesCovers(), { [cKey]: id });
+    }
+    if (newPlace.region) {
+      const existingRCover = await client.hGet(REDIS_KEYS.placesCovers(), rKey);
+      if (!existingRCover) {
+        await client.hSet(REDIS_KEYS.placesCovers(), { [rKey]: id });
+      }
+    }
+    if (newPlace.city) {
+      const existingCityCover = await client.hGet(
+        REDIS_KEYS.placesCovers(),
+        cityKey
+      );
+      if (!existingCityCover) {
+        await client.hSet(REDIS_KEYS.placesCovers(), { [cityKey]: id });
+      }
+    }
+  } else {
+    await client.zAdd(REDIS_KEYS.idxUnplaced(), {
+      member: id,
+      score: item.createdAt,
+    });
+  }
+
+  const updatedItem: GalleryItem = {
+    ...item,
+    place: newPlace,
+    lastVerifiedAt: Date.now(),
+  };
+
+  if (takenAt !== undefined) {
+    updatedItem.takenAt = takenAt;
+  }
+
+  await client.set(REDIS_KEYS.item(id), JSON.stringify(updatedItem));
+  return updatedItem;
+};
+
+const capitalizeWords = (str: string): string =>
+  str
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+
+export const getPlacesHierarchy = async (
+  client: RedisClientContract = redis
+): Promise<PlaceHierarchyNode[]> => {
+  const [countsRecord, coversRecord] = await Promise.all([
+    client.hGetAll(REDIS_KEYS.placesCounts()),
+    client.hGetAll(REDIS_KEYS.placesCovers()),
+  ]);
+
+  const countryNodes = new Map<string, PlaceHierarchyNode>();
+  const regionNodes = new Map<string, PlaceHierarchyNode>();
+  const cityNodes = new Map<string, PlaceHierarchyNode>();
+
+  for (const [key, valStr] of Object.entries(countsRecord)) {
+    const count = Number.parseInt(valStr, 10);
+    if (!Number.isFinite(count) || count <= 0) {
+      continue;
+    }
+
+    const parts = key.split(':');
+    const coverPostId = coversRecord[key];
+
+    if (parts.length === 1) {
+      const countryCode = (parts[0] ?? '').toUpperCase();
+      const countryObj = COUNTRIES.find((c) => c.code === countryCode);
+      const name = countryObj ? countryObj.name : countryCode;
+      countryNodes.set(key, {
+        key,
+        name,
+        type: 'country',
+        count,
+        coverPostId,
+        children: [],
+      });
+    } else if (parts.length === 2) {
+      const regionRaw = parts[1] ?? '';
+      const name = capitalizeWords(regionRaw);
+      regionNodes.set(key, {
+        key,
+        name,
+        type: 'region',
+        count,
+        coverPostId,
+        children: [],
+      });
+    } else if (parts.length === 3) {
+      const cityRaw = parts[2] ?? '';
+      const name = capitalizeWords(cityRaw);
+      cityNodes.set(key, {
+        key,
+        name,
+        type: 'city',
+        count,
+        coverPostId,
+      });
+    }
+  }
+
+  // Nest cities into regions
+  for (const [cityKey, cityNode] of cityNodes.entries()) {
+    const parts = cityKey.split(':');
+    const regionKey = `${parts[0]}:${parts[1]}`;
+    const regionNode = regionNodes.get(regionKey);
+    if (regionNode) {
+      if (!regionNode.children) {
+        regionNode.children = [];
+      }
+      regionNode.children.push(cityNode);
+    }
+  }
+
+  // Nest regions into countries
+  for (const [regionKey, regionNode] of regionNodes.entries()) {
+    const countryKey = regionKey.split(':')[0] ?? '';
+    const countryNode = countryNodes.get(countryKey);
+    if (countryNode) {
+      if (!countryNode.children) {
+        countryNode.children = [];
+      }
+      if (regionNode.children) {
+        regionNode.children.sort((a, b) => b.count - a.count);
+      }
+      countryNode.children.push(regionNode);
+    }
+  }
+
+  const result: PlaceHierarchyNode[] = Array.from(countryNodes.values());
+  for (const c of result) {
+    if (c.children) {
+      c.children.sort((a, b) => b.count - a.count);
+    }
+  }
+  result.sort((a, b) => b.count - a.count);
+  return result;
+};
+
+export const getUnplacedCount = async (
+  client: RedisClientContract = redis
+): Promise<number> => {
+  return await client.zCard(REDIS_KEYS.idxUnplaced());
+};
+
+export const getPlacesSummary = async (
+  client: RedisClientContract = redis
+): Promise<PlacesSummary> => {
+  const [hierarchy, unplacedCount] = await Promise.all([
+    getPlacesHierarchy(client),
+    getUnplacedCount(client),
+  ]);
+  const totalPlacedCount = hierarchy.reduce((acc, c) => acc + c.count, 0);
+  return {
+    hierarchy,
+    unplacedCount,
+    totalPlacedCount,
+  };
 };
