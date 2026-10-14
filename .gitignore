@@ -16,3 +16,7 @@ Thumbs.db
 
 # Devvit local state
 .devvit/
+
+# Markdown documentation files (except README.md)
+*.md
+!README.md

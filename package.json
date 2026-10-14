@@ -1,6 +1,6 @@
 {
   "private": true,
-  "name": "reddit-photo-gallery",
+  "name": "photogallerytest",
   "version": "0.0.0",
   "description": "An iOS-Photos-style interactive timeline and places gallery for community image posts.",
   "license": "BSD-3-Clause",

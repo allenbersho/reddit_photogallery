@@ -1,6 +1,6 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
-  "name": "reddit-photo-gallery",
+  "name": "photogallerytest",
   "post": {
     "dir": "dist/client",
     "entrypoints": {
@@ -108,5 +108,8 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build"
+  },
+  "dev": {
+    "subreddit": "photogallerytest_dev"
   }
 }
