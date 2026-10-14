@@ -1,23 +1,36 @@
+import type { GalleryItem } from '../../shared/types.js';
+import { PhotoGrid } from '../components/PhotoGrid.js';
+import { useTimeline } from '../hooks/useTimeline.js';
 import type { TopicFilter, ZoomLevel } from '../types.js';
+
+const ZOOM_LEVELS: readonly ZoomLevel[] = ['all', 'days', 'months', 'years'];
 
 type TimelineViewProps = {
   selectedTopic: TopicFilter;
   zoomLevel: ZoomLevel;
   onZoomChange: (zoom: ZoomLevel) => void;
-  onSelectPost?: (postId: string) => void;
+  onSelectPhoto: (item: GalleryItem) => void;
+  favoriteIds?: Set<string> | undefined;
+  onToggleFavorite?: ((postId: string) => void) | undefined;
 };
 
 export const TimelineView = ({
   selectedTopic,
   zoomLevel,
   onZoomChange,
+  onSelectPhoto,
+  favoriteIds,
+  onToggleFavorite,
 }: TimelineViewProps) => {
+  const { items, loading, loadingMore, hasMore, error, loadMore, refresh } =
+    useTimeline({ topic: selectedTopic });
+
   return (
     <div className="flex-1 w-full max-w-5xl mx-auto px-3 sm:px-4 py-4 pb-24">
       {/* Zoom level toggle bar */}
       <div className="flex items-center justify-between gap-2 mb-4">
         <div className="flex items-center gap-1 p-1 bg-gray-100 dark:bg-slate-800 rounded-xl">
-          {(['all', 'days', 'months', 'years'] as const).map((z) => (
+          {ZOOM_LEVELS.map((z) => (
             <button
               key={z}
               type="button"
@@ -38,17 +51,25 @@ export const TimelineView = ({
         </div>
       </div>
 
-      {/* Grid container placeholder for Task 5.2 */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5 sm:gap-2">
-        {Array.from({ length: 15 }).map((_, i) => (
-          <div
-            key={i}
-            className="aspect-square rounded-lg bg-gray-200/80 dark:bg-slate-800/80 animate-pulse flex items-center justify-center text-gray-400 text-xs font-mono"
-          >
-            Photo {i + 1}
-          </div>
-        ))}
-      </div>
+      {/* Virtualized / Paged Photo Grid */}
+      <PhotoGrid
+        items={items}
+        loading={loading}
+        loadingMore={loadingMore}
+        hasMore={hasMore}
+        error={error}
+        onLoadMore={loadMore}
+        onSelectPhoto={onSelectPhoto}
+        onRetry={refresh}
+        favoriteIds={favoriteIds}
+        onToggleFavorite={onToggleFavorite}
+        emptyTitle={
+          selectedTopic === 'all'
+            ? 'No photos in the gallery yet'
+            : `No ${selectedTopic} photos yet`
+        }
+        emptySubtitle="New community image posts will automatically appear here."
+      />
     </div>
   );
 };
