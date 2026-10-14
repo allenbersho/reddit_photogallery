@@ -61,7 +61,7 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 
 ## Milestone 7 — Release
 
-- [ ] 7.1 App listing: name, description, screenshots, GeoNames attribution
+- [x] 7.1 App listing: name, description, screenshots, GeoNames attribution (created complete Reddit App Directory listing and submission guide in APP_LISTING.md with full description, feature breakdown, screenshot specifications, CC BY 4.0 GeoNames attribution, and devvit.json metadata updates)
 - [ ] 7.2 Upload and submit for Reddit review
 - [ ] 7.3 Pilot install in one community; collect feedback
 - [ ] 7.4 Triage feedback and plan v2
