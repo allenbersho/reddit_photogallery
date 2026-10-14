@@ -49,8 +49,8 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 - [x] 5.4 Places view (hierarchy, covers, counts) (implemented hierarchical drill-down from countries to regions to cities with photo counts, unplaced bucket, breadcrumbs back navigation, and integrated PhotoGrid)
 - [x] 5.5 Topic filter and search (implemented debounced keyword title search, topic refinement pills, search suggestion chips, match count badge, and integrated PhotoGrid with pagination)
 - [x] 5.6 Detail view with credit and link to the original post (implemented PhotoDetailModal with high-res photo, author credit, date, place badge, navigateTo Reddit link, copy link with showToast, and favorites toggle)
-- [ ] 5.7 Loading, empty and error states everywhere
-- [ ] 5.8 Favorites
+- [x] 5.7 Loading, empty and error states everywhere (implemented shimmer skeletons, graceful error banners with retry triggers, and contextual empty prompts across Timeline, Places, Search, Favorites, and PhotoCard components)
+- [x] 5.8 Favorites (implemented FavoritesView with paginated grid, optimistic unfavorite, personal count badge on tab bar, authentication notice for guests, and Redis persistence)
 
 ## Milestone 6 — Polish and hardening
 

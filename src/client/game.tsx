@@ -135,7 +135,14 @@ export const App = () => {
             onToggleFavorite={handleToggleFavorite}
           />
         )}
-        {activeTab === 'favorites' && <FavoritesView username={username} />}
+        {activeTab === 'favorites' && (
+          <FavoritesView
+            username={username}
+            onSelectPhoto={setSelectedPhoto}
+            favoriteIds={favoriteIds}
+            onToggleFavorite={handleToggleFavorite}
+          />
+        )}
         {activeTab === 'search' && (
           <SearchView
             onSelectPhoto={setSelectedPhoto}
