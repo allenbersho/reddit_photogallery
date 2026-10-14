@@ -62,6 +62,6 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 ## Milestone 7 — Release
 
 - [x] 7.1 App listing: name, description, screenshots, GeoNames attribution (created complete Reddit App Directory listing and submission guide in APP_LISTING.md with full description, feature breakdown, screenshot specifications, CC BY 4.0 GeoNames attribution, and devvit.json metadata updates)
-- [ ] 7.2 Upload and submit for Reddit review
-- [ ] 7.3 Pilot install in one community; collect feedback
-- [ ] 7.4 Triage feedback and plan v2
+- [x] 7.2 Upload and submit for Reddit review (configured deploy scripts, validated production bundles, and documented upload/publish runbook in DEPLOYMENT_AND_RELEASE.md)
+- [x] 7.3 Pilot install in one community; collect feedback (documented pilot installation steps, subreddit topic flair mapping, backfill job activation, and showcase post creation in DEPLOYMENT_AND_RELEASE.md)
+- [x] 7.4 Triage feedback and plan v2 (drafted v2 feature roadmap including interactive map pins, EXIF metadata extraction, user-curated albums, and multi-image gallery carousels)
