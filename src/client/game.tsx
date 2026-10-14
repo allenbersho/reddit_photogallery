@@ -1,78 +1,101 @@
 import './index.css';
 
-import { StrictMode } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { navigateTo } from '@devvit/web/client';
-import { useCounter } from './hooks/useCounter';
+import type { TimelineSummary } from '../shared/types.js';
+import { Navbar } from './components/Navbar.js';
+import { TabBar } from './components/TabBar.js';
+import type { TabType, ThemeMode, TopicFilter, ZoomLevel } from './types.js';
+import { FavoritesView } from './views/FavoritesView.js';
+import { PlacesView } from './views/PlacesView.js';
+import { SearchView } from './views/SearchView.js';
+import { TimelineView } from './views/TimelineView.js';
 
 export const App = () => {
-  const { count, username, loading, increment, decrement } = useCounter();
+  const [activeTab, setActiveTab] = useState<TabType>('timeline');
+  const [selectedTopic, setSelectedTopic] = useState<TopicFilter>('all');
+  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('all');
+  const [theme, setTheme] = useState<ThemeMode>('dark');
+  const [summary, setSummary] = useState<TimelineSummary | null>(null);
+  const [username, setUsername] = useState<string | null>(null);
+
+  // Sync theme class to document element
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  }, [theme]);
+
+  // Load summary and user details
+  useEffect(() => {
+    const fetchInit = async () => {
+      try {
+        const [initRes, summaryRes] = await Promise.all([
+          fetch('/api/init'),
+          fetch('/api/gallery/timeline/summary'),
+        ]);
+
+        if (initRes.ok) {
+          const initData: { username?: string } = await initRes.json();
+          if (initData.username) {
+            setUsername(initData.username);
+          }
+        }
+
+        if (summaryRes.ok) {
+          const sumData: TimelineSummary = await summaryRes.json();
+          setSummary(sumData);
+        }
+      } catch (err) {
+        console.warn('Failed to load initial gallery summary:', err);
+      }
+    };
+
+    void fetchInit();
+  }, []);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   return (
-    <div className="flex relative flex-col justify-center items-center min-h-screen gap-4 bg-white dark:bg-gray-900">
-      <img
-        className="object-contain w-1/2 max-w-[250px] mx-auto"
-        src="/snoo.png"
-        alt="Snoo"
+    <div className="flex flex-col min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)] transition-colors duration-200">
+      <Navbar
+        subredditName="Community"
+        selectedTopic={selectedTopic}
+        onSelectTopic={setSelectedTopic}
+        topicCounts={summary?.topics}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        totalPhotos={summary?.totalCount}
       />
-      <div className="flex flex-col items-center gap-2">
-        <h1 className="text-2xl font-bold text-center text-gray-900 dark:text-gray-100">
-          {username ? `Hey ${username} 👋` : ''}
-        </h1>
-        <p className="text-base text-center text-gray-600 dark:text-gray-300">
-          Edit{' '}
-          <span className="bg-[#e5ebee] dark:bg-gray-700 px-1 py-0.5 rounded">
-            src/client/game.tsx
-          </span>{' '}
-          to get started.
-        </p>
-      </div>
-      <div className="flex items-center justify-center mt-5">
-        <button
-          className="flex items-center justify-center bg-[#d93900] dark:bg-orange-600 text-white w-14 h-14 text-[2.5em] rounded-full cursor-pointer font-mono leading-none transition-colors hover:bg-[#c23300] dark:hover:bg-orange-700"
-          onClick={decrement}
-          disabled={loading}
-        >
-          -
-        </button>
-        <span className="text-[1.8em] font-medium mx-5 min-w-[50px] text-center leading-none text-gray-900 dark:text-white">
-          {loading ? '...' : count}
-        </span>
-        <button
-          className="flex items-center justify-center bg-[#d93900] dark:bg-orange-600 text-white w-14 h-14 text-[2.5em] rounded-full cursor-pointer font-mono leading-none transition-colors hover:bg-[#c23300] dark:hover:bg-orange-700"
-          onClick={increment}
-          disabled={loading}
-        >
-          +
-        </button>
-      </div>
-      <footer className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-3 text-[0.8em] text-gray-600 dark:text-gray-400">
-        <button
-          className="cursor-pointer hover:text-gray-900 dark:hover:text-white transition-colors"
-          onClick={() => navigateTo('https://developers.reddit.com/docs')}
-        >
-          Docs
-        </button>
-        <span className="text-gray-300 dark:text-gray-600">|</span>
-        <button
-          className="cursor-pointer hover:text-gray-900 dark:hover:text-white transition-colors"
-          onClick={() => navigateTo('https://www.reddit.com/r/Devvit')}
-        >
-          r/Devvit
-        </button>
-        <span className="text-gray-300 dark:text-gray-600">|</span>
-        <button
-          className="cursor-pointer hover:text-gray-900 dark:hover:text-white transition-colors"
-          onClick={() => navigateTo('https://discord.com/invite/R7yu2wh9Qz')}
-        >
-          Discord
-        </button>
-      </footer>
+
+      <main className="flex-1 flex flex-col w-full">
+        {activeTab === 'timeline' && (
+          <TimelineView
+            selectedTopic={selectedTopic}
+            zoomLevel={zoomLevel}
+            onZoomChange={setZoomLevel}
+          />
+        )}
+        {activeTab === 'places' && <PlacesView />}
+        {activeTab === 'favorites' && <FavoritesView username={username} />}
+        {activeTab === 'search' && <SearchView />}
+      </main>
+
+      <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
     </div>
   );
 };
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+const rootEl = document.getElementById('root');
+if (rootEl) {
+  createRoot(rootEl).render(
+    <StrictMode>
+      <App />
+    </StrictMode>
+  );
+}

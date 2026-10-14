@@ -43,7 +43,7 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 
 ## Milestone 5 — Client UI
 
-- [ ] 5.1 App shell, navigation (Timeline / Places), theme, mobile layout
+- [x] 5.1 App shell, navigation (Timeline / Places), theme, mobile layout (implemented dark/light theme, Navbar with topic filter pills, iOS-style TabBar for mobile thumbs, and view router in game.tsx, plus sleek inline feed splash.tsx)
 - [ ] 5.2 Virtualized photo grid with placeholders
 - [ ] 5.3 Timeline zoom levels (Years / Months / Days / All) and scrubber
 - [ ] 5.4 Places view (hierarchy, covers, counts)
