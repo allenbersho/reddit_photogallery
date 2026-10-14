@@ -1,7 +1,6 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
   "name": "reddit-photo-gallery",
-  "description": "An iOS-Photos-style interactive timeline and places gallery for community image posts.",
   "post": {
     "dir": "dist/client",
     "entrypoints": {
