@@ -13,8 +13,10 @@ import {
   REDIS_KEYS,
   removeGalleryItem,
   saveGalleryItem,
+  searchGallery,
   setGalleryItemModHidden,
   setJobState,
+  tokenizeTitle,
   updateGalleryItemLocation,
   type RedisClientContract,
 } from './galleryStore.js';
@@ -75,7 +77,7 @@ const createMockRedis = (): RedisClientContract => {
       if (!zmap) {
         return [];
       }
-      const sorted = Array.from(zmap.entries()).map(([member, score]) => ({
+      let sorted = Array.from(zmap.entries()).map(([member, score]) => ({
         member,
         score,
       }));
@@ -88,10 +90,23 @@ const createMockRedis = (): RedisClientContract => {
         return a.score - b.score;
       });
 
-      const offset = typeof start === 'number' ? start : 0;
-      const count =
-        typeof stop === 'number' ? stop - offset + 1 : sorted.length;
-      return sorted.slice(offset, offset + count);
+      if (options?.by === 'score') {
+        const min = options.reverse ? Number(stop) : Number(start);
+        const max = options.reverse ? Number(start) : Number(stop);
+        sorted = sorted.filter(
+          (item) => item.score >= min && item.score <= max
+        );
+        const offset = options.limit?.offset ?? 0;
+        const count = options.limit?.count ?? sorted.length;
+        return sorted.slice(offset, offset + count);
+      }
+
+      const offset = typeof start === 'number' && start >= 0 ? start : 0;
+      let endIndex = typeof stop === 'number' ? stop : sorted.length - 1;
+      if (endIndex < 0) {
+        endIndex = sorted.length + endIndex;
+      }
+      return sorted.slice(offset, endIndex + 1);
     },
     async zRem(key: string, members: string[]): Promise<number> {
       const zmap = zsets.get(key);
@@ -398,6 +413,46 @@ describe('GalleryStore', () => {
       expect(artPage.items[0]?.id).toBe('t3_art');
     });
 
+    it('filters timeline by year and month', async () => {
+      // 2023-05-15
+      const item2023May = createSampleItem({
+        id: 't3_2023_05',
+        createdAt: 1684152000,
+      });
+      // 2024-01-15
+      const item2024Jan = createSampleItem({
+        id: 't3_2024_01',
+        createdAt: 1705320000,
+      });
+      // 2024-08-15
+      const item2024Aug = createSampleItem({
+        id: 't3_2024_08',
+        createdAt: 1723723200,
+      });
+
+      await saveGalleryItem(item2023May, mockRedis);
+      await saveGalleryItem(item2024Jan, mockRedis);
+      await saveGalleryItem(item2024Aug, mockRedis);
+
+      const year2024 = await getTimelinePage({ year: 2024 }, mockRedis);
+      expect(year2024.items).toHaveLength(2);
+      expect(year2024.items.map((i) => i.id)).toEqual([
+        't3_2024_08',
+        't3_2024_01',
+      ]);
+
+      const aug2024 = await getTimelinePage(
+        { year: 2024, month: 8 },
+        mockRedis
+      );
+      expect(aug2024.items).toHaveLength(1);
+      expect(aug2024.items[0]?.id).toBe('t3_2024_08');
+
+      const year2023 = await getTimelinePage({ year: 2023 }, mockRedis);
+      expect(year2023.items).toHaveLength(1);
+      expect(year2023.items[0]?.id).toBe('t3_2023_05');
+    });
+
     it('returns topic counts across all topics', async () => {
       await saveGalleryItem(
         createSampleItem({ id: 't3_s1', topic: 'science' }),
@@ -421,6 +476,71 @@ describe('GalleryStore', () => {
       expect(counts.engineering).toBe(1);
       expect(counts.art).toBe(1);
       expect(counts.other).toBe(0);
+    });
+  });
+
+  describe('searchGallery', () => {
+    it('tokenizes title strings correctly ignoring stopwords and short words', () => {
+      const tokens = tokenizeTitle('The James Webb Space Telescope in 2024');
+      expect(tokens).toContain('james');
+      expect(tokens).toContain('webb');
+      expect(tokens).toContain('space');
+      expect(tokens).toContain('telescope');
+      expect(tokens).not.toContain('the');
+      expect(tokens).not.toContain('in');
+    });
+
+    it('indexes and searches items by title keyword', async () => {
+      const jwstItem = createSampleItem({
+        id: 't3_jwst',
+        title: 'James Webb Space Telescope First Deep Field',
+        createdAt: 2000,
+      });
+      const hubbleItem = createSampleItem({
+        id: 't3_hubble',
+        title: 'Hubble Space Telescope Ultra Deep Field',
+        createdAt: 1000,
+      });
+
+      await saveGalleryItem(jwstItem, mockRedis);
+      await saveGalleryItem(hubbleItem, mockRedis);
+
+      // Search single word "telescope" -> matches both
+      const telescopeRes = await searchGallery(
+        { query: 'telescope' },
+        mockRedis
+      );
+      expect(telescopeRes.items).toHaveLength(2);
+      expect(telescopeRes.items[0]?.id).toBe('t3_jwst'); // newest first
+      expect(telescopeRes.items[1]?.id).toBe('t3_hubble');
+
+      // Search multi-word "james webb" -> matches only jwst
+      const jwstRes = await searchGallery(
+        { query: 'james webb' },
+        mockRedis
+      );
+      expect(jwstRes.items).toHaveLength(1);
+      expect(jwstRes.items[0]?.id).toBe('t3_jwst');
+
+      // Search non-matching term
+      const noRes = await searchGallery({ query: 'mars rover' }, mockRedis);
+      expect(noRes.items).toHaveLength(0);
+    });
+
+    it('cleans up search tokens when item is removed', async () => {
+      const item = createSampleItem({
+        id: 't3_cern',
+        title: 'Large Hadron Collider at CERN',
+      });
+      await saveGalleryItem(item, mockRedis);
+
+      const beforeRes = await searchGallery({ query: 'hadron' }, mockRedis);
+      expect(beforeRes.items).toHaveLength(1);
+
+      await removeGalleryItem('t3_cern', mockRedis);
+
+      const afterRes = await searchGallery({ query: 'hadron' }, mockRedis);
+      expect(afterRes.items).toHaveLength(0);
     });
   });
 

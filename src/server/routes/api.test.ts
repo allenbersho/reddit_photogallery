@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { GalleryItem } from '../../shared/types.js';
+import type {
+  GalleryItem,
+  TimelinePage,
+  TimelineSummary,
+} from '../../shared/types.js';
 import {
   getGalleryItem,
   saveGalleryItem,
   type RedisClientContract,
 } from '../data/galleryStore.js';
-import { createApiRouter, type ModActionResponse } from './api.js';
+import {
+  createApiRouter,
+  defaultModeratorChecker,
+  type ModActionResponse,
+} from './api.js';
 
 const createMockRedis = (): RedisClientContract => {
   const kv = new Map<string, string>();
@@ -40,13 +48,43 @@ const createMockRedis = (): RedisClientContract => {
       }
       return members.length;
     },
-    zRange: async (key: string) => {
+    zRange: async (
+      key: string,
+      start?: number | string,
+      stop?: number | string,
+      options?: {
+        reverse?: boolean;
+        by?: 'score' | 'lex' | 'rank';
+        limit?: { offset: number; count: number };
+      }
+    ) => {
       const set = zsets.get(key);
       if (!set) return [];
-      return Array.from(set.entries()).map(([member, score]) => ({
+      let sorted = Array.from(set.entries()).map(([member, score]) => ({
         member,
         score,
       }));
+      sorted.sort((a, b) =>
+        options?.reverse ? b.score - a.score : a.score - b.score
+      );
+
+      if (options?.by === 'score') {
+        const min = options.reverse ? Number(stop) : Number(start);
+        const max = options.reverse ? Number(start) : Number(stop);
+        sorted = sorted.filter(
+          (item) => item.score >= min && item.score <= max
+        );
+        const offset = options.limit?.offset ?? 0;
+        const count = options.limit?.count ?? sorted.length;
+        return sorted.slice(offset, offset + count);
+      }
+
+      const offset = typeof start === 'number' && start >= 0 ? start : 0;
+      let endIndex = typeof stop === 'number' ? stop : sorted.length - 1;
+      if (endIndex < 0) {
+        endIndex = sorted.length + endIndex;
+      }
+      return sorted.slice(offset, endIndex + 1);
     },
     zRem: async (key: string, members: string[]) => {
       const set = zsets.get(key);
@@ -236,6 +274,49 @@ describe('API router moderator actions', () => {
         await summaryRes.json();
       expect(summary.unplacedCount).toBe(0);
       expect(summary.hierarchy).toHaveLength(1);
+
+      // GET /gallery/places
+      const placesRes = await router.request('/gallery/places');
+      expect(placesRes.status).toBe(200);
+      const placesSummary: { unplacedCount: number; totalPlacedCount: number } =
+        await placesRes.json();
+      expect(placesSummary.totalPlacedCount).toBe(1);
+
+      // GET /gallery/places/country/JP/items
+      const itemsRes = await router.request('/gallery/places/country/JP/items');
+      expect(itemsRes.status).toBe(200);
+      const countryItems: TimelinePage = await itemsRes.json();
+      expect(countryItems.items).toHaveLength(1);
+      expect(countryItems.items[0]?.id).toBe('t3_tokyo');
+
+      // GET /gallery/places/city/JP:Tokyo:Tokyo/items
+      const cityItemsRes = await router.request(
+        '/gallery/places/city/JP:Tokyo:Tokyo/items'
+      );
+      expect(cityItemsRes.status).toBe(200);
+      const cityItems: TimelinePage = await cityItemsRes.json();
+      expect(cityItems.items).toHaveLength(1);
+
+      // Invalid placeType returns 400
+      const badRes = await router.request(
+        '/gallery/places/invalidPlace/abc/items'
+      );
+      expect(badRes.status).toBe(400);
+    });
+
+    it('returns unplaced items via /gallery/places/unplaced/items', async () => {
+      const item = createSampleItem({
+        id: 't3_unplaced_item',
+        place: undefined,
+      });
+      await saveGalleryItem(item, mockRedis);
+
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/places/unplaced/items');
+      expect(res.status).toBe(200);
+      const page: TimelinePage = await res.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.id).toBe('t3_unplaced_item');
     });
   });
 
@@ -278,6 +359,376 @@ describe('API router moderator actions', () => {
       });
 
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe('GET /gallery/timeline', () => {
+    it('returns paged timeline items newest first', async () => {
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_item_old', createdAt: 1000 }),
+        mockRedis
+      );
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_item_new', createdAt: 2000 }),
+        mockRedis
+      );
+
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/timeline?limit=1');
+      expect(res.status).toBe(200);
+
+      const page: TimelinePage = await res.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.id).toBe('t3_item_new');
+      expect(page.hasMore).toBe(true);
+      expect(page.nextCursor).toBeDefined();
+
+      const page2Res = await router.request(
+        `/gallery/timeline?limit=1&cursor=${page.nextCursor}`
+      );
+      expect(page2Res.status).toBe(200);
+      const page2: TimelinePage = await page2Res.json();
+      expect(page2.items).toHaveLength(1);
+      expect(page2.items[0]?.id).toBe('t3_item_old');
+      expect(page2.hasMore).toBe(false);
+    });
+
+    it('filters timeline by topic', async () => {
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_sci', topic: 'science' }),
+        mockRedis
+      );
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_art', topic: 'art' }),
+        mockRedis
+      );
+
+      const router = createApiRouter(mockRedis);
+      const sciRes = await router.request('/gallery/timeline?topic=science');
+      expect(sciRes.status).toBe(200);
+      const sciPage: TimelinePage = await sciRes.json();
+      expect(sciPage.items).toHaveLength(1);
+      expect(sciPage.items[0]?.id).toBe('t3_sci');
+
+      const artRes = await router.request('/gallery/timeline?topic=art');
+      expect(artRes.status).toBe(200);
+      const artPage: TimelinePage = await artRes.json();
+      expect(artPage.items).toHaveLength(1);
+      expect(artPage.items[0]?.id).toBe('t3_art');
+    });
+
+    it('filters timeline by year and month', async () => {
+      // 2023-05-15
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_2023_05', createdAt: 1684152000 }),
+        mockRedis
+      );
+      // 2024-08-15
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_2024_08', createdAt: 1723723200 }),
+        mockRedis
+      );
+
+      const router = createApiRouter(mockRedis);
+      const year2024Res = await router.request('/gallery/timeline?year=2024');
+      expect(year2024Res.status).toBe(200);
+      const year2024Page: TimelinePage = await year2024Res.json();
+      expect(year2024Page.items).toHaveLength(1);
+      expect(year2024Page.items[0]?.id).toBe('t3_2024_08');
+
+      const aug2024Res = await router.request(
+        '/gallery/timeline?year=2024&month=8'
+      );
+      expect(aug2024Res.status).toBe(200);
+      const aug2024Page: TimelinePage = await aug2024Res.json();
+      expect(aug2024Page.items).toHaveLength(1);
+      expect(aug2024Page.items[0]?.id).toBe('t3_2024_08');
+    });
+
+    it('excludes mod-hidden items unless requested by a moderator', async () => {
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_hidden',
+          isModHidden: true,
+          createdAt: 3000,
+        }),
+        mockRedis
+      );
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_visible',
+          isModHidden: false,
+          createdAt: 2000,
+        }),
+        mockRedis
+      );
+
+      // Normal viewer
+      const routerPublic = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false)
+      );
+      const publicRes = await routerPublic.request(
+        '/gallery/timeline?includeHidden=true'
+      );
+      expect(publicRes.status).toBe(200);
+      const publicPage: TimelinePage = await publicRes.json();
+      expect(publicPage.items).toHaveLength(1);
+      expect(publicPage.items[0]?.id).toBe('t3_visible');
+
+      // Moderator viewer
+      const routerMod = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(true)
+      );
+      const modRes = await routerMod.request(
+        '/gallery/timeline?includeHidden=true'
+      );
+      expect(modRes.status).toBe(200);
+      const modPage: TimelinePage = await modRes.json();
+      expect(modPage.items).toHaveLength(2);
+    });
+
+    it('validates invalid query inputs with 400', async () => {
+      const router = createApiRouter(mockRedis);
+
+      const resBadLimit = await router.request('/gallery/timeline?limit=invalid');
+      expect(resBadLimit.status).toBe(400);
+
+      const resBadTopic = await router.request('/gallery/timeline?topic=gaming');
+      expect(resBadTopic.status).toBe(400);
+
+      const resBadPlaceType = await router.request(
+        '/gallery/timeline?placeType=universe'
+      );
+      expect(resBadPlaceType.status).toBe(400);
+
+      const resMonthWithoutYear = await router.request(
+        '/gallery/timeline?month=5'
+      );
+      expect(resMonthWithoutYear.status).toBe(400);
+
+      const resBadMonth = await router.request(
+        '/gallery/timeline?year=2024&month=13'
+      );
+      expect(resBadMonth.status).toBe(400);
+    });
+  });
+
+  describe('GET /gallery/timeline/summary', () => {
+    it('returns timeline counts by year and month along with topic counts', async () => {
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_item1',
+          createdAt: 1684152000, // 2023-05
+          topic: 'science',
+        }),
+        mockRedis
+      );
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_item2',
+          createdAt: 1723723200, // 2024-08
+          topic: 'art',
+        }),
+        mockRedis
+      );
+
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/timeline/summary');
+      expect(res.status).toBe(200);
+
+      const summary: TimelineSummary = await res.json();
+      expect(summary.totalCount).toBe(2);
+      expect(summary.years).toHaveLength(2);
+      expect(summary.topics?.science).toBe(1);
+      expect(summary.topics?.art).toBe(1);
+      expect(summary.topics?.engineering).toBe(0);
+    });
+  });
+
+  describe('GET /gallery/item/:id', () => {
+    it('returns item detail when item exists and is visible', async () => {
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_detail_target', title: 'Target Detail Post' }),
+        mockRedis
+      );
+
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/item/t3_detail_target');
+      expect(res.status).toBe(200);
+
+      const body: { item: GalleryItem } = await res.json();
+      expect(body.item.id).toBe('t3_detail_target');
+      expect(body.item.title).toBe('Target Detail Post');
+    });
+
+    it('returns 404 for nonexistent or removed item', async () => {
+      const router = createApiRouter(mockRedis);
+      const resNonexistent = await router.request('/gallery/item/t3_does_not_exist');
+      expect(resNonexistent.status).toBe(404);
+
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_removed_post', isRemoved: true }),
+        mockRedis
+      );
+      const resRemoved = await router.request('/gallery/item/t3_removed_post');
+      expect(resRemoved.status).toBe(404);
+    });
+
+    it('hides mod-hidden item from normal viewers but shows to moderators', async () => {
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_hidden_detail', isModHidden: true }),
+        mockRedis
+      );
+
+      // Normal viewer
+      const routerNormal = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false)
+      );
+      const resNormal = await routerNormal.request(
+        '/gallery/item/t3_hidden_detail'
+      );
+      expect(resNormal.status).toBe(404);
+
+      // Moderator viewer
+      const routerMod = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(true)
+      );
+      const resMod = await routerMod.request('/gallery/item/t3_hidden_detail');
+      expect(resMod.status).toBe(200);
+      const body: { item: GalleryItem } = await resMod.json();
+      expect(body.item.id).toBe('t3_hidden_detail');
+      expect(body.item.isModHidden).toBe(true);
+    });
+  });
+
+  describe('GET /gallery/search', () => {
+    it('validates query parameter q and returns 400 if missing or empty', async () => {
+      const router = createApiRouter(mockRedis);
+      const resMissing = await router.request('/gallery/search');
+      expect(resMissing.status).toBe(400);
+
+      const resEmpty = await router.request('/gallery/search?q=   ');
+      expect(resEmpty.status).toBe(400);
+    });
+
+    it('returns matching items by title keyword', async () => {
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_galaxy',
+          title: 'Spiral Galaxy M31 in Andromeda',
+          createdAt: 2000,
+        }),
+        mockRedis
+      );
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_nebula',
+          title: 'Orion Nebula Emission Region',
+          createdAt: 1000,
+        }),
+        mockRedis
+      );
+
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/search?q=galaxy');
+      expect(res.status).toBe(200);
+
+      const page: TimelinePage = await res.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.id).toBe('t3_galaxy');
+
+      const noMatchRes = await router.request('/gallery/search?q=supernova');
+      expect(noMatchRes.status).toBe(200);
+      const noMatchPage: TimelinePage = await noMatchRes.json();
+      expect(noMatchPage.items).toHaveLength(0);
+    });
+  });
+
+  describe('Favorites endpoints', () => {
+    it('toggles favorite on and off for authenticated user', async () => {
+      await saveGalleryItem(
+        createSampleItem({ id: 't3_fav_target' }),
+        mockRedis
+      );
+
+      const usernameProvider = vi.fn().mockResolvedValue('curious_scientist');
+      const router = createApiRouter(
+        mockRedis,
+        defaultModeratorChecker,
+        usernameProvider
+      );
+
+      // Check favorite initial state
+      const check1 = await router.request('/gallery/t3_fav_target/favorite');
+      expect(check1.status).toBe(200);
+      const c1: { id: string; isFavorite: boolean } = await check1.json();
+      expect(c1.isFavorite).toBe(false);
+
+      // Toggle ON
+      const toggle1 = await router.request('/gallery/t3_fav_target/favorite', {
+        method: 'POST',
+      });
+      expect(toggle1.status).toBe(200);
+      const t1: { id: string; isFavorite: boolean } = await toggle1.json();
+      expect(t1.isFavorite).toBe(true);
+
+      // Check favorite state is now true
+      const check2 = await router.request('/gallery/t3_fav_target/favorite');
+      const c2: { id: string; isFavorite: boolean } = await check2.json();
+      expect(c2.isFavorite).toBe(true);
+
+      // GET /gallery/favorites returns the favorited item
+      const favListRes = await router.request('/gallery/favorites');
+      expect(favListRes.status).toBe(200);
+      const favPage: TimelinePage = await favListRes.json();
+      expect(favPage.items).toHaveLength(1);
+      expect(favPage.items[0]?.id).toBe('t3_fav_target');
+
+      // Toggle OFF
+      const toggle2 = await router.request('/gallery/t3_fav_target/favorite', {
+        method: 'POST',
+      });
+      expect(toggle2.status).toBe(200);
+      const t2: { id: string; isFavorite: boolean } = await toggle2.json();
+      expect(t2.isFavorite).toBe(false);
+
+      // GET /gallery/favorites is now empty
+      const favListAfter = await router.request('/gallery/favorites');
+      const favPageAfter: TimelinePage = await favListAfter.json();
+      expect(favPageAfter.items).toHaveLength(0);
+    });
+
+    it('requires authentication to toggle favorite', async () => {
+      await saveGalleryItem(createSampleItem({ id: 't3_fav_target' }), mockRedis);
+      const unauthProvider = vi.fn().mockResolvedValue(undefined);
+      const router = createApiRouter(
+        mockRedis,
+        defaultModeratorChecker,
+        unauthProvider
+      );
+
+      const res = await router.request('/gallery/t3_fav_target/favorite', {
+        method: 'POST',
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 404 when toggling favorite on nonexistent post', async () => {
+      const usernameProvider = vi.fn().mockResolvedValue('user123');
+      const router = createApiRouter(
+        mockRedis,
+        defaultModeratorChecker,
+        usernameProvider
+      );
+
+      const res = await router.request('/gallery/t3_nonexistent/favorite', {
+        method: 'POST',
+      });
+      expect(res.status).toBe(404);
     });
   });
 });

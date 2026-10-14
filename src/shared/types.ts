@@ -57,6 +57,8 @@ export type TimelineQueryParams = {
   topic?: Topic;
   placeType?: 'country' | 'region' | 'city' | 'unplaced';
   placeKey?: string;
+  year?: number;
+  month?: number;
   includeHidden?: boolean;
 };
 
@@ -81,6 +83,7 @@ export type YearSummary = {
 export type TimelineSummary = {
   years: YearSummary[];
   totalCount: number;
+  topics?: Record<Topic, number>;
 };
 
 export type PlaceHierarchyNode = {

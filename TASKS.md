@@ -36,10 +36,10 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 
 ## Milestone 4 — Internal API
 
-- [ ] 4.1 Timeline page + timeline summary endpoints
-- [ ] 4.2 Places hierarchy + items-by-place endpoints
-- [ ] 4.3 Item detail + title search endpoints
-- [ ] 4.4 Permissions and input validation on every endpoint, with tests
+- [x] 4.1 Timeline page + timeline summary endpoints (implemented GET /api/gallery/timeline with cursor paging, topic/place/year/month filters, mod-hidden protection, and GET /api/gallery/timeline/summary with year/month breakdown and topic metrics)
+- [x] 4.2 Places hierarchy + items-by-place endpoints (implemented GET /api/gallery/places, /gallery/places/hierarchy, /gallery/places/summary, /gallery/places/unplaced/items, and /gallery/places/:placeType/:placeKey/items with full paging and input validation)
+- [x] 4.3 Item detail + title search endpoints (implemented GET /api/gallery/item/:id with mod-visibility protection and GET /api/gallery/search with title tokenization, inverted index, multi-token intersection, and cursor paging)
+- [x] 4.4 Permissions and input validation on every endpoint, with tests (strict type guards, bounds checking on limits/years/months, caller authorization for favorites and mod actions, and 106 automated tests)
 
 ## Milestone 5 — Client UI
 

@@ -61,6 +61,8 @@ export const REDIS_KEYS = {
   timelineCounts: (): string => 'gallery:timeline:counts',
   jobState: (): string => 'gallery:state:jobs',
   favorites: (userId: string): string => `gallery:fav:${userId}`,
+  idxSearch: (token: string): string =>
+    `gallery:idx:search:${token.trim().toLowerCase()}`,
 };
 
 const formatYearMonth = (
@@ -89,6 +91,46 @@ const parseCursor = (cursor?: string): number => {
 
 const createCursor = (offset: number): string => {
   return Buffer.from(offset.toString(), 'utf8').toString('base64');
+};
+
+export const tokenizeTitle = (title: string): string[] => {
+  const normalized = title.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ');
+  const words = normalized.split(/\s+/).filter((w) => w.length >= 2);
+  const STOPWORDS = new Set([
+    'the',
+    'and',
+    'for',
+    'with',
+    'this',
+    'that',
+    'from',
+    'into',
+    'over',
+    'after',
+    'about',
+    'are',
+    'was',
+    'were',
+    'in',
+    'on',
+    'at',
+    'to',
+    'by',
+    'of',
+    'is',
+    'an',
+    'as',
+    'it',
+    'or',
+    'be',
+  ]);
+  const unique = new Set<string>();
+  for (const w of words) {
+    if (!STOPWORDS.has(w) && w.length >= 2) {
+      unique.add(w);
+    }
+  }
+  return Array.from(unique);
 };
 
 const getIndexKeyForQuery = (params: TimelineQueryParams): string => {
@@ -181,6 +223,12 @@ export const saveGalleryItem = async (
   const { yearStr, monthStr } = formatYearMonth(item.createdAt);
   await client.hIncrBy(REDIS_KEYS.timelineCounts(), yearStr, 1);
   await client.hIncrBy(REDIS_KEYS.timelineCounts(), monthStr, 1);
+
+  // 6. Update search token index
+  const searchTokens = tokenizeTitle(item.title);
+  for (const token of searchTokens) {
+    await client.zAdd(REDIS_KEYS.idxSearch(token), member);
+  }
 };
 
 export const getGalleryItem = async (
@@ -286,7 +334,13 @@ export const removeGalleryItem = async (
   await client.hIncrBy(REDIS_KEYS.timelineCounts(), yearStr, -1);
   await client.hIncrBy(REDIS_KEYS.timelineCounts(), monthStr, -1);
 
-  // 5. Delete primary item record
+  // 5. Remove from search token index
+  const searchTokens = tokenizeTitle(item.title);
+  for (const token of searchTokens) {
+    await client.zRem(REDIS_KEYS.idxSearch(token), [id]);
+  }
+
+  // 6. Delete primary item record
   await client.del(REDIS_KEYS.item(id));
   return true;
 };
@@ -318,24 +372,64 @@ export const getTimelinePage = async (
   const targetKey = getIndexKeyForQuery(params);
 
   const totalCount = await client.zCard(targetKey);
-  if (totalCount === 0 || offset >= totalCount) {
+  if (totalCount === 0) {
     return {
       items: [],
       hasMore: false,
-      totalCount,
+      totalCount: 0,
     };
   }
 
-  // Retrieve slice by rank with reverse ordering (newest first)
-  const rangeResults = await client.zRange(
-    targetKey,
-    offset,
-    offset + limit - 1,
-    {
-      by: 'rank',
+  let rangeResults: { member: string; score: number }[];
+  let hasMore: boolean;
+
+  if (params.year !== undefined) {
+    const monthIndex = params.month !== undefined ? params.month - 1 : 0;
+    const startEpoch = Math.floor(
+      Date.UTC(params.year, monthIndex, 1, 0, 0, 0) / 1000
+    );
+    const endEpoch =
+      params.month !== undefined
+        ? Math.floor(Date.UTC(params.year, params.month, 1, 0, 0, 0) / 1000) - 1
+        : Math.floor(Date.UTC(params.year + 1, 0, 1, 0, 0, 0) / 1000) - 1;
+
+    // With reverse: true and by: 'score', start is endEpoch (max) and stop is startEpoch (min)
+    const rawResults = await client.zRange(targetKey, endEpoch, startEpoch, {
+      by: 'score',
       reverse: true,
+      limit: {
+        offset,
+        count: limit + 1,
+      },
+    });
+
+    if (rawResults.length > limit) {
+      hasMore = true;
+      rangeResults = rawResults.slice(0, limit);
+    } else {
+      hasMore = false;
+      rangeResults = rawResults;
     }
-  );
+  } else {
+    if (offset >= totalCount) {
+      return {
+        items: [],
+        hasMore: false,
+        totalCount,
+      };
+    }
+
+    rangeResults = await client.zRange(
+      targetKey,
+      offset,
+      offset + limit - 1,
+      {
+        by: 'rank',
+        reverse: true,
+      }
+    );
+    hasMore = offset + limit < totalCount;
+  }
 
   const ids = rangeResults.map((r) => r.member);
   const allItems = await getGalleryItems(ids, client);
@@ -346,7 +440,6 @@ export const getTimelinePage = async (
   );
 
   const nextOffset = offset + limit;
-  const hasMore = nextOffset < totalCount;
 
   return {
     items: visibleItems,
@@ -359,7 +452,10 @@ export const getTimelinePage = async (
 export const getTimelineSummary = async (
   client: RedisClientContract = redis
 ): Promise<TimelineSummary> => {
-  const countsRecord = await client.hGetAll(REDIS_KEYS.timelineCounts());
+  const [countsRecord, topics] = await Promise.all([
+    client.hGetAll(REDIS_KEYS.timelineCounts()),
+    getTopicCounts(client),
+  ]);
   const yearMap = new Map<number, YearSummary>();
   let totalCount = 0;
 
@@ -402,6 +498,124 @@ export const getTimelineSummary = async (
 
   return {
     years,
+    totalCount,
+    topics,
+  };
+};
+
+export type SearchQueryParams = {
+  query: string;
+  limit?: number;
+  cursor?: string;
+  includeHidden?: boolean;
+};
+
+export const searchGallery = async (
+  params: SearchQueryParams,
+  client: RedisClientContract = redis
+): Promise<TimelinePage> => {
+  const limit = Math.max(1, Math.min(params.limit ?? 20, 100));
+  const offset = parseCursor(params.cursor);
+  const tokens = tokenizeTitle(params.query);
+
+  if (tokens.length === 0) {
+    return {
+      items: [],
+      hasMore: false,
+      totalCount: 0,
+    };
+  }
+
+  if (tokens.length === 1) {
+    const token = tokens[0] ?? '';
+    const key = REDIS_KEYS.idxSearch(token);
+    const totalCount = await client.zCard(key);
+    if (totalCount === 0 || offset >= totalCount) {
+      return {
+        items: [],
+        hasMore: false,
+        totalCount,
+      };
+    }
+
+    const rangeResults = await client.zRange(
+      key,
+      offset,
+      offset + limit - 1,
+      {
+        by: 'rank',
+        reverse: true,
+      }
+    );
+
+    const ids = rangeResults.map((r) => r.member);
+    const allItems = await getGalleryItems(ids, client);
+    const visibleItems = allItems.filter(
+      (i) =>
+        (params.includeHidden || !i.isModHidden) && !i.isRemoved && !i.isNsfw
+    );
+    const nextOffset = offset + limit;
+    const hasMore = nextOffset < totalCount;
+
+    return {
+      items: visibleItems,
+      nextCursor: hasMore ? createCursor(nextOffset) : undefined,
+      hasMore,
+      totalCount,
+    };
+  }
+
+  // Multi-token: search intersection
+  const tokenRanges = await Promise.all(
+    tokens.map((t) =>
+      client.zRange(REDIS_KEYS.idxSearch(t), 0, 500, {
+        by: 'rank',
+        reverse: true,
+      })
+    )
+  );
+
+  const idSets = tokenRanges.map((r) => new Set(r.map((x) => x.member)));
+  const firstSet = idSets[0] ?? new Set<string>();
+  const matchingIds: string[] = [];
+
+  for (const id of firstSet) {
+    let inAll = true;
+    for (let i = 1; i < idSets.length; i++) {
+      const otherSet = idSets[i];
+      if (!otherSet || !otherSet.has(id)) {
+        inAll = false;
+        break;
+      }
+    }
+    if (inAll) {
+      matchingIds.push(id);
+    }
+  }
+
+  const totalCount = matchingIds.length;
+  if (totalCount === 0 || offset >= totalCount) {
+    return {
+      items: [],
+      hasMore: false,
+      totalCount,
+    };
+  }
+
+  const pagedIds = matchingIds.slice(offset, offset + limit);
+  const allItems = await getGalleryItems(pagedIds, client);
+  const visibleItems = allItems.filter(
+    (i) =>
+      (params.includeHidden || !i.isModHidden) && !i.isRemoved && !i.isNsfw
+  );
+
+  const nextOffset = offset + limit;
+  const hasMore = nextOffset < totalCount;
+
+  return {
+    items: visibleItems,
+    nextCursor: hasMore ? createCursor(nextOffset) : undefined,
+    hasMore,
     totalCount,
   };
 };
@@ -670,5 +884,74 @@ export const getPlacesSummary = async (
     hierarchy,
     unplacedCount,
     totalPlacedCount,
+  };
+};
+
+export const toggleUserFavorite = async (
+  username: string,
+  postId: string,
+  client: RedisClientContract = redis
+): Promise<{ isFavorite: boolean }> => {
+  const userKey = REDIS_KEYS.favorites(username.trim().toLowerCase());
+  const removedCount = await client.zRem(userKey, [postId]);
+  if (removedCount > 0) {
+    return { isFavorite: false };
+  }
+  await client.zAdd(userKey, { member: postId, score: Date.now() });
+  return { isFavorite: true };
+};
+
+export const isUserFavorite = async (
+  username: string,
+  postId: string,
+  client: RedisClientContract = redis
+): Promise<boolean> => {
+  const userKey = REDIS_KEYS.favorites(username.trim().toLowerCase());
+  const items = await client.zRange(userKey, 0, -1, { by: 'rank' });
+  return items.some((item) => item.member === postId);
+};
+
+export const getUserFavorites = async (
+  username: string,
+  params: { limit?: number; cursor?: string } = {},
+  client: RedisClientContract = redis
+): Promise<TimelinePage> => {
+  const limit = Math.max(1, Math.min(params.limit ?? 20, 100));
+  const offset = parseCursor(params.cursor);
+  const userKey = REDIS_KEYS.favorites(username.trim().toLowerCase());
+
+  const totalCount = await client.zCard(userKey);
+  if (totalCount === 0 || offset >= totalCount) {
+    return {
+      items: [],
+      hasMore: false,
+      totalCount,
+    };
+  }
+
+  const rangeResults = await client.zRange(
+    userKey,
+    offset,
+    offset + limit - 1,
+    {
+      by: 'rank',
+      reverse: true,
+    }
+  );
+
+  const ids = rangeResults.map((r) => r.member);
+  const allItems = await getGalleryItems(ids, client);
+  const visibleItems = allItems.filter(
+    (i) => !i.isModHidden && !i.isRemoved && !i.isNsfw
+  );
+
+  const nextOffset = offset + limit;
+  const hasMore = nextOffset < totalCount;
+
+  return {
+    items: visibleItems,
+    nextCursor: hasMore ? createCursor(nextOffset) : undefined,
+    hasMore,
+    totalCount,
   };
 };
