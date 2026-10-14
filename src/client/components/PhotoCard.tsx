@@ -37,6 +37,7 @@ export const PhotoCard = ({
     <div
       role="button"
       tabIndex={0}
+      aria-label={`${item.title} by u/${item.author}`}
       onClick={() => onClick(item)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -92,8 +93,8 @@ export const PhotoCard = ({
           <button
             type="button"
             onClick={handleFavoriteClick}
-            aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-            className="p-1 rounded-full bg-black/40 hover:bg-black/70 backdrop-blur-md text-white transition-all pointer-events-auto cursor-pointer"
+            aria-label={isFavorite ? `Remove ${item.title} from favorites` : `Add ${item.title} to favorites`}
+            className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 backdrop-blur-md text-white transition-all pointer-events-auto cursor-pointer"
           >
             <svg
               className={`w-3.5 h-3.5 ${

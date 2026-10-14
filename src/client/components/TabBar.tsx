@@ -105,15 +105,22 @@ export const TabBar = ({
       aria-label="Bottom Navigation"
       className="fixed bottom-0 left-0 right-0 z-30 glass-panel border-t transition-colors duration-200"
     >
-      <div className="max-w-md mx-auto flex items-center justify-around px-2 py-1.5 safe-area-pb">
+      <div
+        role="tablist"
+        aria-label="Navigation Tabs"
+        className="max-w-md mx-auto flex items-center justify-around px-2 py-1 safe-area-pb"
+      >
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={isActive}
+              aria-label={tab.label}
               onClick={() => onTabChange(tab.id)}
-              className={`flex flex-col items-center justify-center flex-1 py-1 px-2 rounded-xl transition-all duration-150 relative cursor-pointer ${
+              className={`flex flex-col items-center justify-center flex-1 min-h-[44px] py-1 px-2 rounded-xl transition-all duration-150 relative cursor-pointer ${
                 isActive
                   ? 'text-[#ff4500] font-semibold'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'

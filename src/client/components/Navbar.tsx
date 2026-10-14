@@ -67,8 +67,8 @@ export const Navbar = ({
           <button
             type="button"
             onClick={onToggleTheme}
-            aria-label="Toggle theme"
-            className="p-2 rounded-xl text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white bg-gray-100 dark:bg-slate-800/80 hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            className="w-9 h-9 flex items-center justify-center rounded-xl text-gray-500 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white bg-gray-100 dark:bg-slate-800/80 hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
           >
             {theme === 'dark' ? (
               <svg className="w-4 h-4 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
@@ -103,10 +103,12 @@ export const Navbar = ({
                 key={topic.key}
                 type="button"
                 onClick={() => onSelectTopic(topic.key)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-150 cursor-pointer ${
+                aria-pressed={isSelected}
+                aria-label={`Filter by ${topic.label}`}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 min-h-[36px] rounded-full text-xs font-medium whitespace-nowrap transition-all duration-150 cursor-pointer ${
                   isSelected
                     ? 'bg-[#ff4500] text-white shadow-sm font-semibold'
-                    : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700'
+                    : 'bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-slate-700'
                 }`}
               >
                 <span>{topic.icon}</span>

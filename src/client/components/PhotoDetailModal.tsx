@@ -100,7 +100,8 @@ export const PhotoDetailModal = ({
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-3 right-3 z-20 w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center backdrop-blur-xs transition-colors cursor-pointer text-sm shadow-md"
+          aria-label="Close photo details"
+          className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center backdrop-blur-xs transition-colors cursor-pointer text-sm shadow-md"
           title="Close (Esc)"
         >
           ✕

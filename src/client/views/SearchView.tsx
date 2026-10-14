@@ -78,6 +78,7 @@ export const SearchView = ({
           </svg>
           <input
             type="search"
+            aria-label="Search photos by title and keyword"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search titles & keywords (e.g. telescope, robot, painting)..."
@@ -87,7 +88,8 @@ export const SearchView = ({
             <button
               type="button"
               onClick={handleClear}
-              className="absolute right-3 p-1 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer text-xs"
+              aria-label="Clear search input"
+              className="absolute right-2.5 w-7 h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer text-xs"
               title="Clear search"
             >
               ✕
