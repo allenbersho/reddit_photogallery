@@ -48,7 +48,7 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 - [x] 5.3 Timeline zoom levels (Years / Months / Days / All) and scrubber (implemented timeline scrubber bar with year/month pills, summary hook, day-grouping section headers, and zoom transitions from year cover cards to month cards to days to dense grid)
 - [x] 5.4 Places view (hierarchy, covers, counts) (implemented hierarchical drill-down from countries to regions to cities with photo counts, unplaced bucket, breadcrumbs back navigation, and integrated PhotoGrid)
 - [x] 5.5 Topic filter and search (implemented debounced keyword title search, topic refinement pills, search suggestion chips, match count badge, and integrated PhotoGrid with pagination)
-- [ ] 5.6 Detail view with credit and link to the original post
+- [x] 5.6 Detail view with credit and link to the original post (implemented PhotoDetailModal with high-res photo, author credit, date, place badge, navigateTo Reddit link, copy link with showToast, and favorites toggle)
 - [ ] 5.7 Loading, empty and error states everywhere
 - [ ] 5.8 Favorites
 

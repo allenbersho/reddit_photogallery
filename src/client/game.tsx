@@ -4,6 +4,7 @@ import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { GalleryItem, TimelineSummary } from '../shared/types.js';
 import { Navbar } from './components/Navbar.js';
+import { PhotoDetailModal } from './components/PhotoDetailModal.js';
 import { TabBar } from './components/TabBar.js';
 import type { TabType, ThemeMode, TopicFilter, ZoomLevel } from './types.js';
 import { FavoritesView } from './views/FavoritesView.js';
@@ -19,7 +20,7 @@ export const App = () => {
   const [summary, setSummary] = useState<TimelineSummary | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
-  const [, setSelectedPhoto] = useState<GalleryItem | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<GalleryItem | null>(null);
 
   // Sync theme class to document element
   useEffect(() => {
@@ -149,6 +150,15 @@ export const App = () => {
         onTabChange={setActiveTab}
         favoritesCount={favoriteIds.size}
       />
+
+      {selectedPhoto && (
+        <PhotoDetailModal
+          item={selectedPhoto}
+          onClose={() => setSelectedPhoto(null)}
+          isFavorite={favoriteIds.has(selectedPhoto.id)}
+          onToggleFavorite={handleToggleFavorite}
+        />
+      )}
     </div>
   );
 };
