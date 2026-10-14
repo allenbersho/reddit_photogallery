@@ -54,7 +54,7 @@ Each task ends with: typecheck + lint + tests pass, verified in playtest.
 
 ## Milestone 6 — Polish and hardening
 
-- [ ] 6.1 Performance test with a large synthetic dataset (5,000+ items)
+- [x] 6.1 Performance test with a large synthetic dataset (5,000+ items) (built automated benchmark suite verifying 5,000 items indexed, sub-30ms cursor pagination across 500 items with 0 duplicates, sub-30ms topic filtering, sub-50ms place hierarchy rollup, sub-40ms single/multi-token search, and clean deletion)
 - [ ] 6.2 Accessibility pass (alt text, tap targets, contrast)
 - [ ] 6.3 Security/policy review against the Devvit Rules and content policy
 - [ ] 6.4 Seed test subreddit and run the full manual test checklist
