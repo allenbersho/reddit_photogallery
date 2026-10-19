@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import type { GalleryItem } from '../../shared/types.js';
+import type {
+  DisciplineFilter,
+  GalleryItem,
+  ImpactFilter,
+} from '../../shared/types.js';
 import { PhotoCard } from '../components/PhotoCard.js';
 import { PhotoGrid } from '../components/PhotoGrid.js';
 import { TimelineScrubber } from '../components/TimelineScrubber.js';
@@ -11,36 +15,51 @@ import { getMonthName, groupItemsByDay } from '../utils/date.js';
 const ZOOM_LEVELS: readonly ZoomLevel[] = ['all', 'days', 'months', 'years'];
 
 type TimelineViewProps = {
-  selectedTopic: TopicFilter;
+  selectedDisciplines?: DisciplineFilter[] | undefined;
+  selectedImpacts?: ImpactFilter[] | undefined;
+  selectedTopic?: TopicFilter | undefined;
   zoomLevel: ZoomLevel;
   onZoomChange: (zoom: ZoomLevel) => void;
   onSelectPhoto: (item: GalleryItem) => void;
   favoriteIds?: Set<string> | undefined;
   onToggleFavorite?: ((postId: string) => void) | undefined;
+  onResetFilters?: (() => void) | undefined;
 };
 
 export const TimelineView = ({
-  selectedTopic,
+  selectedDisciplines = [],
+  selectedImpacts = [],
+  selectedTopic = 'all',
   zoomLevel,
   onZoomChange,
   onSelectPhoto,
   favoriteIds,
   onToggleFavorite,
+  onResetFilters,
 }: TimelineViewProps) => {
   const [selectedYear, setSelectedYear] = useState<number | undefined>(undefined);
   const [selectedMonth, setSelectedMonth] = useState<number | undefined>(undefined);
 
   const { summary } = useTimelineSummary();
 
-  const { items, loading, loadingMore, hasMore, error, loadMore, refresh } = useTimeline({
-    topic: selectedTopic,
-    year: selectedYear,
-    month: selectedMonth,
-  });
+  const { items, loading, loadingMore, hasMore, error, loadMore, refresh } =
+    useTimeline({
+      disciplines: selectedDisciplines.length > 0 ? selectedDisciplines : undefined,
+      impacts: selectedImpacts.length > 0 ? selectedImpacts : undefined,
+      topic:
+        selectedDisciplines.length === 0 && selectedImpacts.length === 0
+          ? selectedTopic
+          : undefined,
+      year: selectedYear,
+      month: selectedMonth,
+    });
 
   const dayGroups = useMemo(() => groupItemsByDay(items), [items]);
 
-  const handleSelectTime = (year?: number | undefined, month?: number | undefined) => {
+  const handleSelectTime = (
+    year?: number | undefined,
+    month?: number | undefined
+  ) => {
     setSelectedYear(year);
     setSelectedMonth(month);
   };
@@ -57,10 +76,24 @@ export const TimelineView = ({
     onZoomChange('days');
   };
 
+  const filterSummaryText = useMemo(() => {
+    const parts: string[] = [];
+    if (selectedDisciplines.length > 0) {
+      parts.push(`Disciplines: ${selectedDisciplines.join(', ')}`);
+    }
+    if (selectedImpacts.length > 0) {
+      parts.push(`Impacts: ${selectedImpacts.join(', ')}`);
+    }
+    if (parts.length === 0 && selectedTopic !== 'all') {
+      parts.push(`Topic: ${selectedTopic}`);
+    }
+    return parts.length > 0 ? parts.join(' • ') : 'All community photos';
+  }, [selectedDisciplines, selectedImpacts, selectedTopic]);
+
   return (
     <div className="flex-1 w-full max-w-5xl mx-auto px-3 sm:px-4 py-4 pb-24">
-      {/* Zoom level toggle bar */}
-      <div className="flex items-center justify-between gap-2 mb-3">
+      {/* Zoom level toggle bar & Active filters */}
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-1 p-1 bg-gray-100 dark:bg-slate-800 rounded-xl">
           {ZOOM_LEVELS.map((z) => (
             <button
@@ -78,8 +111,23 @@ export const TimelineView = ({
           ))}
         </div>
 
-        <div className="text-xs text-gray-500 dark:text-gray-400">
-          Filter: <span className="font-semibold capitalize text-gray-700 dark:text-gray-300">{selectedTopic}</span>
+        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+          <span className="truncate max-w-[280px] sm:max-w-md">
+            Showing:{' '}
+            <span className="font-semibold text-gray-800 dark:text-gray-200">
+              {filterSummaryText}
+            </span>
+          </span>
+          {(selectedDisciplines.length > 0 || selectedImpacts.length > 0) &&
+            onResetFilters && (
+              <button
+                type="button"
+                onClick={onResetFilters}
+                className="text-orange-600 dark:text-orange-400 hover:underline cursor-pointer shrink-0"
+              >
+                Clear
+              </button>
+            )}
         </div>
       </div>
 
@@ -96,7 +144,7 @@ export const TimelineView = ({
       {/* Selected time breadcrumb filter pill if filtered */}
       {(selectedYear !== undefined || selectedMonth !== undefined) && (
         <div className="flex items-center gap-2 mb-3 px-1 text-xs">
-          <span className="text-gray-500 dark:text-gray-400">Showing:</span>
+          <span className="text-gray-500 dark:text-gray-400">Time window:</span>
           <span className="px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 font-medium">
             {selectedMonth !== undefined ? `${getMonthName(selectedMonth)} ` : ''}
             {selectedYear}
@@ -115,7 +163,9 @@ export const TimelineView = ({
       {zoomLevel === 'years' && summary && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {summary.years.map((y) => {
-            const yearItem = items.find((i) => new Date(i.createdAt * 1000).getFullYear() === y.year);
+            const yearItem = items.find(
+              (i) => new Date(i.createdAt * 1000).getFullYear() === y.year
+            );
             return (
               <div
                 key={y.year}
@@ -123,7 +173,8 @@ export const TimelineView = ({
                 tabIndex={0}
                 onClick={() => handleYearCardClick(y.year)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') handleYearCardClick(y.year);
+                  if (e.key === 'Enter' || e.key === ' ')
+                    handleYearCardClick(y.year);
                 }}
                 className="group relative aspect-4/3 rounded-2xl overflow-hidden bg-gray-200 dark:bg-slate-800 cursor-pointer shadow-xs hover:shadow-md transition-all transform hover:-translate-y-0.5"
               >
@@ -140,7 +191,9 @@ export const TimelineView = ({
                   </div>
                 )}
                 <div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-3 text-white">
-                  <span className="text-2xl font-bold tracking-tight">{y.year}</span>
+                  <span className="text-2xl font-bold tracking-tight">
+                    {y.year}
+                  </span>
                   <span className="text-xs text-gray-200">{y.count} photos</span>
                 </div>
               </div>
@@ -163,7 +216,9 @@ export const TimelineView = ({
                   {y.months.map((m) => {
                     const monthItem = items.find((i) => {
                       const d = new Date(i.createdAt * 1000);
-                      return d.getFullYear() === y.year && d.getMonth() + 1 === m.month;
+                      return (
+                        d.getFullYear() === y.year && d.getMonth() + 1 === m.month
+                      );
                     });
 
                     return (
@@ -173,13 +228,16 @@ export const TimelineView = ({
                         tabIndex={0}
                         onClick={() => handleMonthCardClick(y.year, m.month)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') handleMonthCardClick(y.year, m.month);
+                          if (e.key === 'Enter' || e.key === ' ')
+                            handleMonthCardClick(y.year, m.month);
                         }}
                         className="group relative aspect-4/3 rounded-xl overflow-hidden bg-gray-200 dark:bg-slate-800 cursor-pointer shadow-xs hover:shadow-md transition-all transform hover:-translate-y-0.5"
                       >
                         {monthItem ? (
                           <img
-                            src={monthItem.media.previewUrl || monthItem.media.url}
+                            src={
+                              monthItem.media.previewUrl || monthItem.media.url
+                            }
                             alt={`${getMonthName(m.month)} ${y.year}`}
                             loading="lazy"
                             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
@@ -190,8 +248,12 @@ export const TimelineView = ({
                           </div>
                         )}
                         <div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent flex flex-col justify-end p-2.5 text-white">
-                          <span className="text-base font-bold">{getMonthName(m.month)}</span>
-                          <span className="text-[11px] text-gray-200">{m.count} photos</span>
+                          <span className="text-base font-bold">
+                            {getMonthName(m.month)}
+                          </span>
+                          <span className="text-[11px] text-gray-200">
+                            {m.count} photos
+                          </span>
                         </div>
                       </div>
                     );
@@ -218,7 +280,8 @@ export const TimelineView = ({
                   {group.label}
                 </span>
                 <span className="text-[11px] text-gray-500 dark:text-gray-400">
-                  {group.items.length} {group.items.length === 1 ? 'photo' : 'photos'}
+                  {group.items.length}{' '}
+                  {group.items.length === 1 ? 'photo' : 'photos'}
                 </span>
               </div>
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-1.5 sm:gap-2">
@@ -251,9 +314,9 @@ export const TimelineView = ({
           favoriteIds={favoriteIds}
           onToggleFavorite={onToggleFavorite}
           emptyTitle={
-            selectedTopic === 'all'
-              ? 'No photos in the gallery yet'
-              : `No ${selectedTopic} photos yet`
+            selectedDisciplines.length > 0 || selectedImpacts.length > 0
+              ? 'No photos matching the selected Chimera filters'
+              : 'No photos in the gallery yet'
           }
           emptySubtitle="New community image posts will automatically appear here."
         />

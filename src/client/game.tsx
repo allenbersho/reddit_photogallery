@@ -2,11 +2,17 @@ import './index.css';
 
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { GalleryItem, TimelineSummary } from '../shared/types.js';
+import type {
+  DisciplineFilter,
+  GalleryItem,
+  ImpactFilter,
+  TimelineSummary,
+} from '../shared/types.js';
 import { Navbar } from './components/Navbar.js';
 import { PhotoDetailModal } from './components/PhotoDetailModal.js';
 import { TabBar } from './components/TabBar.js';
-import type { TabType, ThemeMode, TopicFilter, ZoomLevel } from './types.js';
+import { useTaxonomySummary } from './hooks/useTaxonomySummary.js';
+import type { TabType, ThemeMode, ZoomLevel } from './types.js';
 import { FavoritesView } from './views/FavoritesView.js';
 import { PlacesView } from './views/PlacesView.js';
 import { SearchView } from './views/SearchView.js';
@@ -14,13 +20,20 @@ import { TimelineView } from './views/TimelineView.js';
 
 export const App = () => {
   const [activeTab, setActiveTab] = useState<TabType>('timeline');
-  const [selectedTopic, setSelectedTopic] = useState<TopicFilter>('all');
+  const [selectedDisciplines, setSelectedDisciplines] = useState<
+    DisciplineFilter[]
+  >([]);
+  const [selectedImpacts, setSelectedImpacts] = useState<ImpactFilter[]>([]);
   const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('all');
   const [theme, setTheme] = useState<ThemeMode>('dark');
   const [summary, setSummary] = useState<TimelineSummary | null>(null);
   const [username, setUsername] = useState<string | null>(null);
+  const [isModerator, setIsModerator] = useState<boolean>(false);
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [selectedPhoto, setSelectedPhoto] = useState<GalleryItem | null>(null);
+
+  const { summary: taxonomySummary, refresh: refreshTaxonomySummary } =
+    useTaxonomySummary();
 
   // Sync theme class to document element
   useEffect(() => {
@@ -43,9 +56,13 @@ export const App = () => {
         ]);
 
         if (initRes.ok) {
-          const initData: { username?: string } = await initRes.json();
+          const initData: { username?: string; isModerator?: boolean } =
+            await initRes.json();
           if (initData.username) {
             setUsername(initData.username);
+          }
+          if (typeof initData.isModerator === 'boolean') {
+            setIsModerator(initData.isModerator);
           }
         }
 
@@ -70,6 +87,31 @@ export const App = () => {
 
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  const handleToggleDiscipline = (disc: DisciplineFilter | 'all') => {
+    if (disc === 'all') {
+      setSelectedDisciplines([]);
+    } else {
+      setSelectedDisciplines((prev) =>
+        prev.includes(disc) ? prev.filter((d) => d !== disc) : [...prev, disc]
+      );
+    }
+  };
+
+  const handleToggleImpact = (imp: ImpactFilter | 'all') => {
+    if (imp === 'all') {
+      setSelectedImpacts([]);
+    } else {
+      setSelectedImpacts((prev) =>
+        prev.includes(imp) ? prev.filter((i) => i !== imp) : [...prev, imp]
+      );
+    }
+  };
+
+  const handleResetFilters = () => {
+    setSelectedDisciplines([]);
+    setSelectedImpacts([]);
   };
 
   const handleToggleFavorite = async (postId: string) => {
@@ -105,27 +147,37 @@ export const App = () => {
     }
   };
 
+  const handleItemUpdated = (updatedItem: GalleryItem) => {
+    setSelectedPhoto(updatedItem);
+    void refreshTaxonomySummary();
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)] transition-colors duration-200">
       <Navbar
         subredditName="Community"
-        selectedTopic={selectedTopic}
-        onSelectTopic={setSelectedTopic}
-        topicCounts={summary?.topics}
+        selectedDisciplines={selectedDisciplines}
+        onToggleDiscipline={handleToggleDiscipline}
+        selectedImpacts={selectedImpacts}
+        onToggleImpact={handleToggleImpact}
+        taxonomySummary={taxonomySummary}
         theme={theme}
         onToggleTheme={toggleTheme}
-        totalPhotos={summary?.totalCount}
+        totalPhotos={taxonomySummary?.totalCount ?? summary?.totalCount}
+        onResetFilters={handleResetFilters}
       />
 
       <main className="flex-1 flex flex-col w-full">
         {activeTab === 'timeline' && (
           <TimelineView
-            selectedTopic={selectedTopic}
+            selectedDisciplines={selectedDisciplines}
+            selectedImpacts={selectedImpacts}
             zoomLevel={zoomLevel}
             onZoomChange={setZoomLevel}
             onSelectPhoto={setSelectedPhoto}
             favoriteIds={favoriteIds}
             onToggleFavorite={handleToggleFavorite}
+            onResetFilters={handleResetFilters}
           />
         )}
         {activeTab === 'places' && (
@@ -160,10 +212,14 @@ export const App = () => {
 
       {selectedPhoto && (
         <PhotoDetailModal
+          key={selectedPhoto.id}
           item={selectedPhoto}
           onClose={() => setSelectedPhoto(null)}
           isFavorite={favoriteIds.has(selectedPhoto.id)}
           onToggleFavorite={handleToggleFavorite}
+          currentUser={username}
+          isModerator={isModerator}
+          onItemUpdated={handleItemUpdated}
         />
       )}
     </div>

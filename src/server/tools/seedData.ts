@@ -244,6 +244,11 @@ export const seedGalleryStore = async (
         width: config.width,
         height: config.height,
       },
+      disciplines: [],
+      disciplinesSource: 'untagged',
+      impacts: [],
+      impactsSource: 'untagged',
+      isCrosspost: false,
       topic: config.topic,
       topicSource: 'flair',
       place: config.place

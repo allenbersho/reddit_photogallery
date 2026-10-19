@@ -302,6 +302,151 @@ describe('Triggers Router', () => {
 
       expect(res.status).toBe(400);
     });
+
+    it('captures an eligible crosspost using parent post image and child post ID', async () => {
+      const mockParentPost = {
+        id: 't3_parent_nasa',
+        title: 'NASA Nebula Photo',
+        url: 'https://i.redd.it/nebula.jpg',
+        permalink: '/r/space/comments/parent_nasa',
+        nsfw: false,
+        authorName: 'nasa_curator',
+        subredditName: 'space',
+        createdAt: 1690000000,
+      };
+
+      const mockReddit = {
+        async getPostById(id: string) {
+          if (id === 't3_parent_nasa') return mockParentPost;
+          return undefined;
+        },
+      };
+
+      const customRouter = createTriggersRouter(mockRedis, undefined, mockReddit);
+
+      const payload: OnPostCreateRequest = {
+        type: 'PostCreate',
+        post: createMockPost({
+          id: 't3_child_cross_1',
+          title: 'Shared Nebula Image',
+          crosspostParentId: 't3_parent_nasa',
+          isImage: false,
+          url: 'https://reddit.com/r/space/comments/parent_nasa',
+        }),
+        author: { id: 't2_crossposter', name: 'astro_fan' } as UserV2,
+        subreddit: { id: 't5_local', name: 'photogallery' } as SubredditV2,
+      };
+
+      const res = await customRouter.request('/on-post-create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      expect(res.status).toBe(200);
+      const json: unknown = await res.json();
+      const data = json as TriggerResult;
+      expect(data.status).toBe('success');
+      expect(data.message).toContain('Captured crosspost');
+
+      const saved = await getGalleryItem('t3_child_cross_1', mockRedis);
+      expect(saved).not.toBeNull();
+      expect(saved?.isCrosspost).toBe(true);
+      expect(saved?.crosspostParentId).toBe('t3_parent_nasa');
+      expect(saved?.originalAuthor).toBe('nasa_curator');
+      expect(saved?.originalSubreddit).toBe('space');
+      expect(saved?.crossposterName).toBe('astro_fan');
+      expect(saved?.media.url).toBe('https://i.redd.it/nebula.jpg');
+    });
+
+    it('deduplicates repeat crossposts of the same parent in O(1)', async () => {
+      const mockParentPost = {
+        id: 't3_parent_rover',
+        title: 'Mars Rover Selfie',
+        url: 'https://i.redd.it/rover.jpg',
+        nsfw: false,
+        authorName: 'jpl_tech',
+        subredditName: 'mars',
+        createdAt: 1690000000,
+      };
+
+      const mockReddit = {
+        async getPostById(id: string) {
+          if (id === 't3_parent_rover') return mockParentPost;
+          return undefined;
+        },
+      };
+
+      const customRouter = createTriggersRouter(mockRedis, undefined, mockReddit);
+
+      // First crosspost succeeds
+      const payload1: OnPostCreateRequest = {
+        type: 'PostCreate',
+        post: createMockPost({
+          id: 't3_rover_cross_first',
+          crosspostParentId: 't3_parent_rover',
+        }),
+      };
+      const res1 = await customRouter.request('/on-post-create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload1),
+      });
+      expect(res1.status).toBe(200);
+
+      // Second crosspost with same parent is rejected as duplicate
+      const payload2: OnPostCreateRequest = {
+        type: 'PostCreate',
+        post: createMockPost({
+          id: 't3_rover_cross_second',
+          crosspostParentId: 't3_parent_rover',
+        }),
+      };
+      const res2 = await customRouter.request('/on-post-create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload2),
+      });
+      expect(res2.status).toBe(200);
+      const json2: unknown = await res2.json();
+      const data2 = json2 as TriggerResult;
+      expect(data2.message).toContain('already captured');
+
+      // Only the first crosspost exists in gallery
+      expect(await getGalleryItem('t3_rover_cross_first', mockRedis)).not.toBeNull();
+      expect(await getGalleryItem('t3_rover_cross_second', mockRedis)).toBeNull();
+    });
+
+    it('gracefully skips crosspost if parent post throws an inaccessible error', async () => {
+      const mockReddit = {
+        async getPostById() {
+          throw new Error('no post t3_parent_private');
+        },
+      };
+
+      const customRouter = createTriggersRouter(mockRedis, undefined, mockReddit);
+
+      const payload: OnPostCreateRequest = {
+        type: 'PostCreate',
+        post: createMockPost({
+          id: 't3_inaccessible_cross',
+          crosspostParentId: 't3_parent_private',
+        }),
+      };
+
+      const res = await customRouter.request('/on-post-create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      expect(res.status).toBe(200);
+      const json: unknown = await res.json();
+      const data = json as TriggerResult;
+      expect(data.status).toBe('success');
+      expect(data.message).toContain('parent post t3_parent_private inaccessible');
+      expect(await getGalleryItem('t3_inaccessible_cross', mockRedis)).toBeNull();
+    });
   });
 
   describe('POST /on-post-delete', () => {

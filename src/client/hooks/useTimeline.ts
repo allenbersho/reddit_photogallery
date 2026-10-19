@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GalleryItem, TimelinePage } from '../../shared/types.js';
+import type {
+  DisciplineFilter,
+  GalleryItem,
+  ImpactFilter,
+  TimelinePage,
+} from '../../shared/types.js';
 import type { TopicFilter } from '../types.js';
 
 type UseTimelineOptions = {
   topic?: TopicFilter | undefined;
+  disciplines?: DisciplineFilter[] | DisciplineFilter | undefined;
+  impacts?: ImpactFilter[] | ImpactFilter | undefined;
   year?: number | undefined;
   month?: number | undefined;
   placeType?: 'country' | 'region' | 'city' | 'unplaced' | undefined;
@@ -22,7 +29,16 @@ type TimelineState = {
 };
 
 export const useTimeline = (options: UseTimelineOptions = {}) => {
-  const { topic = 'all', year, month, placeType, placeKey, limit = 30 } = options;
+  const {
+    topic = 'all',
+    disciplines,
+    impacts,
+    year,
+    month,
+    placeType,
+    placeKey,
+    limit = 30,
+  } = options;
 
   const [state, setState] = useState<TimelineState>({
     items: [],
@@ -35,6 +51,13 @@ export const useTimeline = (options: UseTimelineOptions = {}) => {
 
   const nextCursorRef = useRef<string | undefined>(undefined);
   const isLoadingRef = useRef(false);
+
+  const disciplinesKey = Array.isArray(disciplines)
+    ? disciplines.join(',')
+    : (disciplines ?? '');
+  const impactsKey = Array.isArray(impacts)
+    ? impacts.join(',')
+    : (impacts ?? '');
 
   const fetchPage = useCallback(
     async (cursor?: string, isInitial = false) => {
@@ -52,6 +75,8 @@ export const useTimeline = (options: UseTimelineOptions = {}) => {
         params.set('limit', limit.toString());
         if (cursor) params.set('cursor', cursor);
         if (topic !== 'all') params.set('topic', topic);
+        if (disciplinesKey) params.set('disciplines', disciplinesKey);
+        if (impactsKey) params.set('impacts', impactsKey);
         if (year !== undefined) params.set('year', year.toString());
         if (month !== undefined) params.set('month', month.toString());
         if (placeType) params.set('placeType', placeType);
@@ -97,8 +122,9 @@ export const useTimeline = (options: UseTimelineOptions = {}) => {
         isLoadingRef.current = false;
       }
     },
-    [topic, year, month, placeType, placeKey, limit]
+    [topic, disciplinesKey, impactsKey, year, month, placeType, placeKey, limit]
   );
+
 
   // Reload when filters change
   useEffect(() => {

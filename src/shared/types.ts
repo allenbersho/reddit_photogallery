@@ -1,3 +1,5 @@
+import type { Discipline, Impact, TagSource } from './taxonomy.js';
+
 export type Topic = 'science' | 'engineering' | 'art' | 'other';
 
 export type TopicSource = 'flair' | 'mod' | 'default';
@@ -27,11 +29,29 @@ export type GalleryItem = {
   title: string;
   author: string;
   subreddit: string;
-  createdAt: number; // Post created epoch timestamp in seconds
+  createdAt: number; // Post created epoch timestamp in seconds (when posted into installed sub)
   takenAt?: number; // Optional capture date epoch in seconds
   media: MediaAsset;
-  topic: Topic;
-  topicSource: TopicSource;
+
+  // Chimera University taxonomy
+  disciplines: Discipline[];
+  disciplinesSource: TagSource;
+  impacts: Impact[];
+  impactsSource: TagSource;
+
+  // Crosspost / Repost metadata
+  isCrosspost: boolean;
+  crosspostParentId?: string;
+  originalSubreddit?: string;
+  originalAuthor?: string;
+  originalPermalink?: string;
+  originalCreatedAt?: number;
+  crossposterName?: string;
+
+  // Legacy topic fields (retained for backward compatibility and migration)
+  topic?: Topic;
+  topicSource?: TopicSource;
+
   place?: PlaceLocation;
   isModHidden: boolean;
   isNsfw: boolean;
@@ -51,9 +71,14 @@ export type TimelineCursor = {
   id: string;
 };
 
+export type DisciplineFilter = Discipline | 'untagged';
+export type ImpactFilter = Impact | 'untagged';
+
 export type TimelineQueryParams = {
   limit?: number;
   cursor?: string;
+  disciplines?: DisciplineFilter[];
+  impacts?: ImpactFilter[];
   topic?: Topic;
   placeType?: 'country' | 'region' | 'city' | 'unplaced';
   placeKey?: string;
@@ -83,6 +108,8 @@ export type YearSummary = {
 export type TimelineSummary = {
   years: YearSummary[];
   totalCount: number;
+  disciplines?: Record<Discipline | 'untagged', number>;
+  impacts?: Record<Impact | 'untagged', number>;
   topics?: Record<Topic, number>;
 };
 
@@ -106,3 +133,22 @@ export type TagLocationRequest = {
   location: string;
   takenDate?: string;
 };
+
+export type TagItemRequest = {
+  postId: string;
+  disciplines?: Discipline[];
+  impacts?: Impact[];
+  location?: string;
+  takenDate?: string;
+};
+
+export type TaxonomySummary = {
+  disciplines: Record<Discipline, number>;
+  impacts: Record<Impact, number>;
+  untagged: {
+    disciplines: number;
+    impacts: number;
+  };
+  totalCount: number;
+};
+

@@ -1,4 +1,8 @@
 import { useState, type MouseEvent } from 'react';
+import {
+  DISCIPLINE_COLORS,
+  type Discipline,
+} from '../../shared/taxonomy.js';
 import type { GalleryItem } from '../../shared/types.js';
 
 type PhotoCardProps = {
@@ -8,11 +12,13 @@ type PhotoCardProps = {
   onToggleFavorite?: ((postId: string) => void) | undefined;
 };
 
-const TOPIC_BADGES: Record<string, { label: string; icon: string; bg: string }> = {
-  science: { label: 'Science', icon: '🔬', bg: 'bg-emerald-500/80' },
-  engineering: { label: 'Eng', icon: '⚙️', bg: 'bg-blue-500/80' },
-  art: { label: 'Art', icon: '🎨', bg: 'bg-purple-500/80' },
-  other: { label: 'General', icon: '📷', bg: 'bg-gray-500/80' },
+const DISCIPLINE_ICONS: Record<Discipline, string> = {
+  Electromagnetics: '⚡',
+  Mechanics: '⚙️',
+  Biology: '🧬',
+  Mathematics: '📐',
+  Arts: '🎨',
+  Materials: '💎',
 };
 
 export const PhotoCard = ({
@@ -24,7 +30,15 @@ export const PhotoCard = ({
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const topicInfo = TOPIC_BADGES[item.topic] ?? TOPIC_BADGES.other;
+  const primaryDiscipline =
+    item.disciplines && item.disciplines.length > 0
+      ? item.disciplines[0]
+      : undefined;
+  const extraDisciplinesCount =
+    item.disciplines && item.disciplines.length > 1
+      ? item.disciplines.length - 1
+      : 0;
+
 
   const handleFavoriteClick = (e: MouseEvent) => {
     e.stopPropagation();
@@ -66,8 +80,18 @@ export const PhotoCard = ({
         />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center p-2 text-center text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-slate-900">
-          <svg className="w-6 h-6 mb-1 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          <svg
+            className="w-6 h-6 mb-1 text-gray-400"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={1.5}
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+            />
           </svg>
           <span className="text-[10px] line-clamp-1">{item.title}</span>
         </div>
@@ -76,25 +100,52 @@ export const PhotoCard = ({
       {/* Subtle overlay vignette on hover */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none" />
 
-      {/* Top overlay badges: Topic + Favorite */}
-      <div className="absolute top-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
-        {/* Topic pill */}
-        <span
-          className={`text-[9px] font-semibold text-white px-1.5 py-0.5 rounded-full backdrop-blur-md shadow-xs flex items-center gap-1 ${
-            topicInfo?.bg ?? 'bg-black/60'
-          }`}
-        >
-          <span>{topicInfo?.icon}</span>
-          <span className="hidden sm:inline">{topicInfo?.label}</span>
-        </span>
+      {/* Top overlay badges: Crosspost / Chimera Discipline + Favorite */}
+      <div className="absolute top-1.5 left-1.5 right-1.5 flex items-start justify-between gap-1 pointer-events-none">
+        <div className="flex flex-col gap-1 min-w-0">
+          {/* Crosspost badge */}
+          {item.isCrosspost && item.originalSubreddit && (
+            <span className="text-[9px] font-bold text-white px-1.5 py-0.5 rounded-full bg-linear-to-r from-blue-600/90 to-indigo-600/90 backdrop-blur-md shadow-xs flex items-center gap-1 w-fit max-w-[120px] truncate">
+              <span>🔄</span>
+              <span className="truncate">r/{item.originalSubreddit}</span>
+            </span>
+          )}
+
+          {/* Chimera Discipline pill */}
+          {primaryDiscipline ? (
+            <span
+              style={{
+                backgroundColor: DISCIPLINE_COLORS[primaryDiscipline]?.bg ?? '#a0d8f1',
+                color: DISCIPLINE_COLORS[primaryDiscipline]?.text ?? '#111827',
+              }}
+              className="text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-xs flex items-center gap-0.5 w-fit max-w-[120px] truncate border border-black/10"
+            >
+              <span>{DISCIPLINE_ICONS[primaryDiscipline] ?? '🏷️'}</span>
+              <span className="truncate">{primaryDiscipline}</span>
+              {extraDisciplinesCount > 0 && (
+                <span className="opacity-80 text-[8px]">
+                  +{extraDisciplinesCount}
+                </span>
+              )}
+            </span>
+          ) : (
+            <span className="text-[9px] font-medium text-gray-200 px-1.5 py-0.5 rounded-full bg-black/50 backdrop-blur-md w-fit">
+              Untagged
+            </span>
+          )}
+        </div>
 
         {/* Favorite heart button */}
         {onToggleFavorite && (
           <button
             type="button"
             onClick={handleFavoriteClick}
-            aria-label={isFavorite ? `Remove ${item.title} from favorites` : `Add ${item.title} to favorites`}
-            className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 backdrop-blur-md text-white transition-all pointer-events-auto cursor-pointer"
+            aria-label={
+              isFavorite
+                ? `Remove ${item.title} from favorites`
+                : `Add ${item.title} to favorites`
+            }
+            className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full bg-black/50 hover:bg-black/75 backdrop-blur-md text-white transition-all pointer-events-auto cursor-pointer shrink-0"
           >
             <svg
               className={`w-3.5 h-3.5 ${
@@ -128,7 +179,13 @@ export const PhotoCard = ({
               {item.place.city || item.place.region || item.place.country}
             </span>
           )}
-          <span className="ml-auto opacity-75">u/{item.author}</span>
+          {item.isCrosspost ? (
+            <span className="ml-auto opacity-85 truncate">
+              🔄 u/{item.crossposterName || item.author}
+            </span>
+          ) : (
+            <span className="ml-auto opacity-75">u/{item.author}</span>
+          )}
         </div>
       </div>
     </div>

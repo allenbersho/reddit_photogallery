@@ -1,4 +1,10 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import {
+  CHIMERA_DISCIPLINES,
+  CHIMERA_IMPACTS,
+  type Discipline,
+  type Impact,
+} from '../../shared/taxonomy.js';
 import type { GalleryItem, Topic } from '../../shared/types.js';
 import {
   getPlacesHierarchy,
@@ -52,6 +58,21 @@ describe('Performance benchmark with 5,000 synthetic gallery items', () => {
       const keyword1 = KEYWORDS[i % KEYWORDS.length] ?? 'item';
       const keyword2 = KEYWORDS[(i + 3) % KEYWORDS.length] ?? 'study';
 
+      const dIndex = i % (CHIMERA_DISCIPLINES.length + 1);
+      const disc =
+        dIndex < CHIMERA_DISCIPLINES.length
+          ? CHIMERA_DISCIPLINES[dIndex]
+          : undefined;
+      const disciplines: Discipline[] = disc ? [disc] : [];
+
+      const iIndex = i % (CHIMERA_IMPACTS.length + 1);
+      const imp =
+        iIndex < CHIMERA_IMPACTS.length ? CHIMERA_IMPACTS[iIndex] : undefined;
+      const impacts: Impact[] = imp ? [imp] : [];
+
+      const isCrosspost = i % 7 === 0;
+
+
       // Timestamps increment by 30 minutes for each item over ~100 days to span years/months
       const createdAt = baseTime + i * 1800;
 
@@ -68,6 +89,14 @@ describe('Performance benchmark with 5,000 synthetic gallery items', () => {
           width: 1920,
           height: 1080,
         },
+        disciplines,
+        disciplinesSource: disciplines.length > 0 ? 'poster-tagged' : 'untagged',
+        impacts,
+        impactsSource: impacts.length > 0 ? 'poster-tagged' : 'untagged',
+        isCrosspost,
+        crosspostParentId: isCrosspost ? `t3_parent_${i}` : undefined,
+        originalSubreddit: isCrosspost ? 'original_research' : undefined,
+        originalAuthor: isCrosspost ? `orig_author_${i}` : undefined,
         topic,
         topicSource: 'flair',
         place: placeConfig
@@ -218,4 +247,75 @@ describe('Performance benchmark with 5,000 synthetic gallery items', () => {
     const deletedAgain = await removeGalleryItem(targetId, redis);
     expect(deletedAgain).toBe(false);
   });
+
+  it('filters by Chimera single discipline and multi-discipline OR under 35ms', async () => {
+    // Single discipline
+    const startSingle = performance.now();
+    const biologyPage = await getTimelinePage(
+      { disciplines: ['Biology'], limit: 30 },
+      redis
+    );
+    const singleDuration = performance.now() - startSingle;
+
+    expect(biologyPage.items.length).toBeGreaterThan(0);
+    expect(biologyPage.items.length).toBeLessThanOrEqual(30);
+    for (const item of biologyPage.items) {
+      expect(item.disciplines).toContain('Biology');
+    }
+    expect(singleDuration).toBeLessThan(35);
+
+    // Multi-discipline OR: Biology OR Arts
+    const startMulti = performance.now();
+    const multiPage = await getTimelinePage(
+      { disciplines: ['Biology', 'Arts'], limit: 30 },
+      redis
+    );
+    const multiDuration = performance.now() - startMulti;
+
+    expect(multiPage.items.length).toBeGreaterThan(0);
+    for (const item of multiPage.items) {
+      const match =
+        item.disciplines.includes('Biology') || item.disciplines.includes('Arts');
+      expect(match).toBe(true);
+    }
+    expect(multiDuration).toBeLessThan(40);
+  });
+
+  it('filters by Chimera cross-group (Disciplines AND Impacts) under 50ms', async () => {
+    const start = performance.now();
+    const crossPage = await getTimelinePage(
+      {
+        disciplines: ['Biology', 'Mechanics'],
+        impacts: ['Home'],
+        limit: 25,
+      },
+      redis
+    );
+    const duration = performance.now() - start;
+
+    expect(duration).toBeLessThan(50);
+    for (const item of crossPage.items) {
+      const discMatch =
+        item.disciplines.includes('Biology') ||
+        item.disciplines.includes('Mechanics');
+      expect(discMatch).toBe(true);
+      expect(item.impacts).toContain('Home');
+    }
+  });
+
+  it('queries Chimera untagged items under 35ms', async () => {
+    const start = performance.now();
+    const untaggedPage = await getTimelinePage(
+      { disciplines: ['untagged'], limit: 25 },
+      redis
+    );
+    const duration = performance.now() - start;
+
+    expect(untaggedPage.items.length).toBeGreaterThan(0);
+    for (const item of untaggedPage.items) {
+      expect(item.disciplines.length).toBe(0);
+    }
+    expect(duration).toBeLessThan(35);
+  });
 });
+

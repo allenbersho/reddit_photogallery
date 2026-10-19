@@ -81,6 +81,90 @@
         "label": "Location Flairs",
         "helpText": "Comma-separated keywords or prefixes used for location flairs",
         "defaultValue": "location, place, taken in, shot in, photo in"
+      },
+      "enableKeywordSuggestions": {
+        "type": "boolean",
+        "label": "Enable Title Keyword Suggestions",
+        "helpText": "Automatically suggest Disciplines and Impacts based on post titles",
+        "defaultValue": true
+      },
+      "flairsElectromagnetics": {
+        "type": "string",
+        "label": "Electromagnetics Flairs",
+        "helpText": "Comma-separated keywords or flair names mapped to Electromagnetics",
+        "defaultValue": "electromagnetics, circuit, radio, rf, antenna, pcb, electronics"
+      },
+      "flairsMechanics": {
+        "type": "string",
+        "label": "Mechanics Flairs",
+        "helpText": "Comma-separated keywords or flair names mapped to Mechanics",
+        "defaultValue": "mechanics, robotics, engine, mechanical, structure, vehicle"
+      },
+      "flairsBiology": {
+        "type": "string",
+        "label": "Biology Flairs",
+        "helpText": "Comma-separated keywords or flair names mapped to Biology",
+        "defaultValue": "biology, bio, cell, flora, fauna, nature, anatomy, dna, wildlife"
+      },
+      "flairsMathematics": {
+        "type": "string",
+        "label": "Mathematics Flairs",
+        "helpText": "Comma-separated keywords or flair names mapped to Mathematics",
+        "defaultValue": "mathematics, math, geometry, fractal, proof, algorithm"
+      },
+      "flairsArts": {
+        "type": "string",
+        "label": "Arts Flairs",
+        "helpText": "Comma-separated keywords or flair names mapped to Arts",
+        "defaultValue": "arts, art, sculpture, painting, photography, design, drawing"
+      },
+      "flairsMaterials": {
+        "type": "string",
+        "label": "Materials Flairs",
+        "helpText": "Comma-separated keywords or flair names mapped to Materials",
+        "defaultValue": "materials, material, crystal, polymer, alloy, metallurgy"
+      },
+      "flairsSelf": {
+        "type": "string",
+        "label": "Impact: Self Flairs",
+        "helpText": "Comma-separated keywords mapped to Impact: Self",
+        "defaultValue": "self, personal, wearable, wellness"
+      },
+      "flairsHome": {
+        "type": "string",
+        "label": "Impact: Home Flairs",
+        "helpText": "Comma-separated keywords mapped to Impact: Home",
+        "defaultValue": "home, domestic, house, indoor"
+      },
+      "flairsFriends": {
+        "type": "string",
+        "label": "Impact: Friends Flairs",
+        "helpText": "Comma-separated keywords mapped to Impact: Friends",
+        "defaultValue": "friends, team, peer, club, social"
+      },
+      "flairsGovernment": {
+        "type": "string",
+        "label": "Impact: Government Flairs",
+        "helpText": "Comma-separated keywords mapped to Impact: Government",
+        "defaultValue": "government, public, civic, infrastructure, policy"
+      },
+      "enableCrossposts": {
+        "type": "boolean",
+        "label": "Process Crossposts",
+        "helpText": "Enable or disable processing crossposted images into the gallery",
+        "defaultValue": true
+      },
+      "crosspostAllowlist": {
+        "type": "string",
+        "label": "Crosspost Subreddit Allowlist",
+        "helpText": "Optional comma-separated list of allowed source subreddits (leave blank for all)",
+        "defaultValue": ""
+      },
+      "crosspostBlocklist": {
+        "type": "string",
+        "label": "Crosspost Subreddit Blocklist",
+        "helpText": "Optional comma-separated list of blocked source subreddits",
+        "defaultValue": ""
       }
     }
   },
@@ -102,6 +186,10 @@
       "reconcile": {
         "endpoint": "/internal/scheduler/reconcile",
         "cron": "0 */4 * * *"
+      },
+      "migration": {
+        "endpoint": "/internal/scheduler/migration",
+        "cron": "*/10 * * * *"
       }
     }
   },

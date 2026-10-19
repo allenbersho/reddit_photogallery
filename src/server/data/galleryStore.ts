@@ -1,4 +1,10 @@
 import { redis } from '@devvit/web/server';
+import {
+  canOverrideTagSource,
+  type Discipline,
+  type Impact,
+  type TagSource,
+} from '../../shared/taxonomy.js';
 import type {
   GalleryItem,
   PlaceHierarchyNode,
@@ -49,6 +55,12 @@ export const REDIS_KEYS = {
   item: (id: string): string => `gallery:item:${id}`,
   idxTime: (): string => 'gallery:idx:time',
   idxTopic: (topic: Topic): string => `gallery:idx:topic:${topic}`,
+  idxDiscipline: (discipline: Discipline | string): string =>
+    `gallery:idx:discipline:${discipline.trim().toLowerCase()}`,
+  idxDisciplineUntagged: (): string => 'gallery:idx:discipline:untagged',
+  idxImpact: (impact: Impact | string): string =>
+    `gallery:idx:impact:${impact.trim().toLowerCase()}`,
+  idxImpactUntagged: (): string => 'gallery:idx:impact:untagged',
   idxUnplaced: (): string => 'gallery:idx:place:unplaced',
   idxCountry: (country: string): string =>
     `gallery:idx:place:country:${country.trim().toLowerCase()}`,
@@ -63,6 +75,10 @@ export const REDIS_KEYS = {
   favorites: (userId: string): string => `gallery:fav:${userId}`,
   idxSearch: (token: string): string =>
     `gallery:idx:search:${token.trim().toLowerCase()}`,
+  crosspostParents: (): string => 'gallery:crosspost:parents',
+  crosspostDuplicates: (parentId: string): string =>
+    `gallery:crosspost:dupes:${parentId}`,
+  schemaVersion: (): string => 'gallery:schema_version',
 };
 
 const formatYearMonth = (
@@ -133,7 +149,63 @@ export const tokenizeTitle = (title: string): string[] => {
   return Array.from(unique);
 };
 
+// Crosspost deduplication helpers (O(1) Redis operations)
+export const getCrosspostParentChild = async (
+  parentId: string,
+  client: RedisClientContract = redis
+): Promise<string | undefined> => {
+  return await client.hGet(REDIS_KEYS.crosspostParents(), parentId);
+};
+
+export const isCrosspostDuplicate = async (
+  parentId: string,
+  client: RedisClientContract = redis
+): Promise<boolean> => {
+  const existingChild = await client.hGet(
+    REDIS_KEYS.crosspostParents(),
+    parentId
+  );
+  return Boolean(existingChild);
+};
+
+export const recordCrosspostDuplicate = async (
+  parentId: string,
+  duplicatePostId: string,
+  client: RedisClientContract = redis
+): Promise<void> => {
+  await client.zAdd(REDIS_KEYS.crosspostDuplicates(parentId), {
+    member: duplicatePostId,
+    score: Date.now(),
+  });
+};
+
 const getIndexKeyForQuery = (params: TimelineQueryParams): string => {
+  // If a single discipline is requested and no other specialized index
+  if (
+    params.disciplines &&
+    params.disciplines.length === 1 &&
+    (!params.impacts || params.impacts.length === 0) &&
+    !params.placeType &&
+    !params.topic
+  ) {
+    const d = params.disciplines[0]!;
+    return d === 'untagged'
+      ? REDIS_KEYS.idxDisciplineUntagged()
+      : REDIS_KEYS.idxDiscipline(d);
+  }
+  // If a single impact is requested and no other specialized index
+  if (
+    params.impacts &&
+    params.impacts.length === 1 &&
+    (!params.disciplines || params.disciplines.length === 0) &&
+    !params.placeType &&
+    !params.topic
+  ) {
+    const imp = params.impacts[0]!;
+    return imp === 'untagged'
+      ? REDIS_KEYS.idxImpactUntagged()
+      : REDIS_KEYS.idxImpact(imp);
+  }
   if (params.topic) {
     return REDIS_KEYS.idxTopic(params.topic);
   }
@@ -159,6 +231,67 @@ const getIndexKeyForQuery = (params: TimelineQueryParams): string => {
   return REDIS_KEYS.idxTime();
 };
 
+export const matchesTimelineFilters = (
+  item: GalleryItem,
+  params: TimelineQueryParams
+): boolean => {
+  if (item.isRemoved || item.isNsfw) {
+    return false;
+  }
+  if (!params.includeHidden && item.isModHidden) {
+    return false;
+  }
+  // Legacy topic filter
+  if (params.topic && item.topic !== params.topic) {
+    return false;
+  }
+  // Disciplines filter: OR within group
+  if (params.disciplines && params.disciplines.length > 0) {
+    const wantsUntagged = params.disciplines.includes('untagged');
+    const isUntagged = !item.disciplines || item.disciplines.length === 0;
+    const hasDiscipline = item.disciplines?.some((d) =>
+      params.disciplines!.includes(d)
+    );
+    if (!hasDiscipline && !(wantsUntagged && isUntagged)) {
+      return false;
+    }
+  }
+  // Impacts filter: OR within group
+  if (params.impacts && params.impacts.length > 0) {
+    const wantsUntagged = params.impacts.includes('untagged');
+    const isUntagged = !item.impacts || item.impacts.length === 0;
+    const hasImpact = item.impacts?.some((imp) =>
+      params.impacts!.includes(imp)
+    );
+    if (!hasImpact && !(wantsUntagged && isUntagged)) {
+      return false;
+    }
+  }
+  // Location filters
+  if (params.placeType === 'unplaced' && item.place) {
+    return false;
+  }
+  if (params.placeType && params.placeType !== 'unplaced' && params.placeKey) {
+    if (!item.place) {
+      return false;
+    }
+    const parts = params.placeKey.split(':');
+    const country = parts[0]?.trim().toLowerCase();
+    const region = parts[1]?.trim().toLowerCase();
+    const city = parts[2]?.trim().toLowerCase();
+    if (country && item.place.country.trim().toLowerCase() !== country) {
+      return false;
+    }
+    if (region && item.place.region.trim().toLowerCase() !== region) {
+      return false;
+    }
+    if (city && item.place.city.trim().toLowerCase() !== city) {
+      return false;
+    }
+  }
+  return true;
+};
+
 export const saveGalleryItem = async (
   item: GalleryItem,
   client: RedisClientContract = redis
@@ -175,10 +308,43 @@ export const saveGalleryItem = async (
   const member = { member: item.id, score: item.createdAt };
   await client.zAdd(REDIS_KEYS.idxTime(), member);
 
-  // 3. Add to topic index
-  await client.zAdd(REDIS_KEYS.idxTopic(item.topic), member);
+  // 3. Add to legacy topic index if topic exists
+  if (item.topic) {
+    await client.zAdd(REDIS_KEYS.idxTopic(item.topic), member);
+  }
 
-  // 4. Update place indexes & hierarchy counters
+  // 4. Add to Chimera Discipline indexes
+  if (item.disciplines && item.disciplines.length > 0) {
+    for (const discipline of item.disciplines) {
+      await client.zAdd(REDIS_KEYS.idxDiscipline(discipline), member);
+    }
+  } else {
+    await client.zAdd(REDIS_KEYS.idxDisciplineUntagged(), member);
+  }
+
+  // 5. Add to Chimera Impact indexes
+  if (item.impacts && item.impacts.length > 0) {
+    for (const impact of item.impacts) {
+      await client.zAdd(REDIS_KEYS.idxImpact(impact), member);
+    }
+  } else {
+    await client.zAdd(REDIS_KEYS.idxImpactUntagged(), member);
+  }
+
+  // 6. Crosspost deduplication registration
+  if (item.isCrosspost && item.crosspostParentId) {
+    const existing = await client.hGet(
+      REDIS_KEYS.crosspostParents(),
+      item.crosspostParentId
+    );
+    if (!existing) {
+      await client.hSet(REDIS_KEYS.crosspostParents(), {
+        [item.crosspostParentId]: item.id,
+      });
+    }
+  }
+
+  // 7. Update place indexes & hierarchy counters
   if (item.place && item.place.country) {
     const cKey = item.place.country.trim().toLowerCase();
     const rKey = `${cKey}:${item.place.region.trim().toLowerCase()}`;
@@ -219,12 +385,12 @@ export const saveGalleryItem = async (
     await client.zAdd(REDIS_KEYS.idxUnplaced(), member);
   }
 
-  // 5. Update timeline summary counters
+  // 8. Update timeline summary counters
   const { yearStr, monthStr } = formatYearMonth(item.createdAt);
   await client.hIncrBy(REDIS_KEYS.timelineCounts(), yearStr, 1);
   await client.hIncrBy(REDIS_KEYS.timelineCounts(), monthStr, 1);
 
-  // 6. Update search token index
+  // 9. Update search token index
   const searchTokens = tokenizeTitle(item.title);
   for (const token of searchTokens) {
     await client.zAdd(REDIS_KEYS.idxSearch(token), member);
@@ -291,10 +457,43 @@ export const removeGalleryItem = async (
   // 1. Remove from time index
   await client.zRem(REDIS_KEYS.idxTime(), [id]);
 
-  // 2. Remove from topic index
-  await client.zRem(REDIS_KEYS.idxTopic(item.topic), [id]);
+  // 2. Remove from legacy topic index
+  if (item.topic) {
+    await client.zRem(REDIS_KEYS.idxTopic(item.topic), [id]);
+  }
 
-  // 3. Remove from place index and decrement counters
+  // 3. Remove from Chimera Discipline indexes
+  if (item.disciplines && item.disciplines.length > 0) {
+    for (const discipline of item.disciplines) {
+      await client.zRem(REDIS_KEYS.idxDiscipline(discipline), [id]);
+    }
+  } else {
+    await client.zRem(REDIS_KEYS.idxDisciplineUntagged(), [id]);
+  }
+
+  // 4. Remove from Chimera Impact indexes
+  if (item.impacts && item.impacts.length > 0) {
+    for (const impact of item.impacts) {
+      await client.zRem(REDIS_KEYS.idxImpact(impact), [id]);
+    }
+  } else {
+    await client.zRem(REDIS_KEYS.idxImpactUntagged(), [id]);
+  }
+
+  // 5. Remove crosspost deduplication mapping if this item was the primary entry
+  if (item.isCrosspost && item.crosspostParentId) {
+    const mapped = await client.hGet(
+      REDIS_KEYS.crosspostParents(),
+      item.crosspostParentId
+    );
+    if (mapped === id) {
+      await client.hDel(REDIS_KEYS.crosspostParents(), [
+        item.crosspostParentId,
+      ]);
+    }
+  }
+
+  // 6. Remove from place index and decrement counters
   if (item.place && item.place.country) {
     const cKey = item.place.country.trim().toLowerCase();
     const rKey = `${cKey}:${item.place.region.trim().toLowerCase()}`;
@@ -329,20 +528,104 @@ export const removeGalleryItem = async (
     await client.zRem(REDIS_KEYS.idxUnplaced(), [id]);
   }
 
-  // 4. Decrement timeline counts
+  // 7. Decrement timeline counts
   const { yearStr, monthStr } = formatYearMonth(item.createdAt);
   await client.hIncrBy(REDIS_KEYS.timelineCounts(), yearStr, -1);
   await client.hIncrBy(REDIS_KEYS.timelineCounts(), monthStr, -1);
 
-  // 5. Remove from search token index
+  // 8. Remove from search token index
   const searchTokens = tokenizeTitle(item.title);
   for (const token of searchTokens) {
     await client.zRem(REDIS_KEYS.idxSearch(token), [id]);
   }
 
-  // 6. Delete primary item record
+  // 9. Delete primary item record
   await client.del(REDIS_KEYS.item(id));
   return true;
+};
+
+export const updateGalleryItemTags = async (
+  id: string,
+  updates: {
+    disciplines?: Discipline[];
+    disciplinesSource?: TagSource;
+    impacts?: Impact[];
+    impactsSource?: TagSource;
+  },
+  client: RedisClientContract = redis
+): Promise<GalleryItem | null> => {
+  const item = await getGalleryItem(id, client);
+  if (!item) {
+    return null;
+  }
+
+  const member = { member: id, score: item.createdAt };
+
+  let newDisciplines = item.disciplines ?? [];
+  let newDisciplinesSource = item.disciplinesSource ?? 'untagged';
+  if (
+    updates.disciplines !== undefined &&
+    updates.disciplinesSource !== undefined &&
+    canOverrideTagSource(item.disciplinesSource, updates.disciplinesSource)
+  ) {
+    if (item.disciplines && item.disciplines.length > 0) {
+      for (const d of item.disciplines) {
+        await client.zRem(REDIS_KEYS.idxDiscipline(d), [id]);
+      }
+    } else {
+      await client.zRem(REDIS_KEYS.idxDisciplineUntagged(), [id]);
+    }
+
+    newDisciplines = updates.disciplines;
+    newDisciplinesSource = updates.disciplinesSource;
+
+    if (newDisciplines.length > 0) {
+      for (const d of newDisciplines) {
+        await client.zAdd(REDIS_KEYS.idxDiscipline(d), member);
+      }
+    } else {
+      await client.zAdd(REDIS_KEYS.idxDisciplineUntagged(), member);
+    }
+  }
+
+  let newImpacts = item.impacts ?? [];
+  let newImpactsSource = item.impactsSource ?? 'untagged';
+  if (
+    updates.impacts !== undefined &&
+    updates.impactsSource !== undefined &&
+    canOverrideTagSource(item.impactsSource, updates.impactsSource)
+  ) {
+    if (item.impacts && item.impacts.length > 0) {
+      for (const imp of item.impacts) {
+        await client.zRem(REDIS_KEYS.idxImpact(imp), [id]);
+      }
+    } else {
+      await client.zRem(REDIS_KEYS.idxImpactUntagged(), [id]);
+    }
+
+    newImpacts = updates.impacts;
+    newImpactsSource = updates.impactsSource;
+
+    if (newImpacts.length > 0) {
+      for (const imp of newImpacts) {
+        await client.zAdd(REDIS_KEYS.idxImpact(imp), member);
+      }
+    } else {
+      await client.zAdd(REDIS_KEYS.idxImpactUntagged(), member);
+    }
+  }
+
+  const updatedItem: GalleryItem = {
+    ...item,
+    disciplines: newDisciplines,
+    disciplinesSource: newDisciplinesSource,
+    impacts: newImpacts,
+    impactsSource: newImpactsSource,
+    lastVerifiedAt: Date.now(),
+  };
+
+  await client.set(REDIS_KEYS.item(id), JSON.stringify(updatedItem));
+  return updatedItem;
 };
 
 export const setGalleryItemModHidden = async (
@@ -363,6 +646,17 @@ export const setGalleryItemModHidden = async (
   return true;
 };
 
+export const clearLegacyTopicIndexes = async (
+  client: RedisClientContract = redis
+): Promise<void> => {
+  await client.del(
+    REDIS_KEYS.idxTopic('science'),
+    REDIS_KEYS.idxTopic('engineering'),
+    REDIS_KEYS.idxTopic('art'),
+    REDIS_KEYS.idxTopic('other')
+  );
+};
+
 export const getTimelinePage = async (
   params: TimelineQueryParams,
   client: RedisClientContract = redis
@@ -380,8 +674,17 @@ export const getTimelinePage = async (
     };
   }
 
-  let rangeResults: { member: string; score: number }[];
-  let hasMore: boolean;
+  const hasComplexFilters = Boolean(
+    (params.disciplines && params.disciplines.length > 1) ||
+      (params.impacts && params.impacts.length > 1) ||
+      (params.disciplines &&
+        params.disciplines.length > 0 &&
+        params.impacts &&
+        params.impacts.length > 0) ||
+      (params.placeType &&
+        ((params.disciplines && params.disciplines.length > 0) ||
+          (params.impacts && params.impacts.length > 0)))
+  );
 
   if (params.year !== undefined) {
     const monthIndex = params.month !== undefined ? params.month - 1 : 0;
@@ -393,7 +696,6 @@ export const getTimelinePage = async (
         ? Math.floor(Date.UTC(params.year, params.month, 1, 0, 0, 0) / 1000) - 1
         : Math.floor(Date.UTC(params.year + 1, 0, 1, 0, 0, 0) / 1000) - 1;
 
-    // With reverse: true and by: 'score', start is endEpoch (max) and stop is startEpoch (min)
     const rawResults = await client.zRange(targetKey, endEpoch, startEpoch, {
       by: 'score',
       reverse: true,
@@ -403,14 +705,24 @@ export const getTimelinePage = async (
       },
     });
 
-    if (rawResults.length > limit) {
-      hasMore = true;
-      rangeResults = rawResults.slice(0, limit);
-    } else {
-      hasMore = false;
-      rangeResults = rawResults;
-    }
-  } else {
+    const hasMore = rawResults.length > limit;
+    const ids = (hasMore ? rawResults.slice(0, limit) : rawResults).map(
+      (r) => r.member
+    );
+    const allItems = await getGalleryItems(ids, client);
+    const visibleItems = allItems.filter((i) =>
+      matchesTimelineFilters(i, params)
+    );
+
+    return {
+      items: visibleItems,
+      nextCursor: hasMore ? createCursor(offset + limit) : undefined,
+      hasMore,
+      totalCount,
+    };
+  }
+
+  if (!hasComplexFilters) {
     if (offset >= totalCount) {
       return {
         items: [],
@@ -419,7 +731,7 @@ export const getTimelinePage = async (
       };
     }
 
-    rangeResults = await client.zRange(
+    const rangeResults = await client.zRange(
       targetKey,
       offset,
       offset + limit - 1,
@@ -428,33 +740,135 @@ export const getTimelinePage = async (
         reverse: true,
       }
     );
-    hasMore = offset + limit < totalCount;
+    const hasMore = offset + limit < totalCount;
+    const ids = rangeResults.map((r) => r.member);
+    const allItems = await getGalleryItems(ids, client);
+    const visibleItems = allItems.filter((i) =>
+      matchesTimelineFilters(i, params)
+    );
+
+    return {
+      items: visibleItems,
+      nextCursor: hasMore ? createCursor(offset + limit) : undefined,
+      hasMore,
+      totalCount,
+    };
   }
 
-  const ids = rangeResults.map((r) => r.member);
-  const allItems = await getGalleryItems(ids, client);
+  // Complex multi-group filter: page in bounded batches to avoid unbounded scans
+  const matchedItems: GalleryItem[] = [];
+  let currentOffset = offset;
+  const SCAN_CHUNK_SIZE = Math.max(limit * 2, 40);
+  let hasMoreCandidates = true;
 
-  // Exclude hidden or removed items from client view unless includeHidden is true
-  const visibleItems = allItems.filter(
-    (i) => (params.includeHidden || !i.isModHidden) && !i.isRemoved && !i.isNsfw
-  );
+  while (
+    matchedItems.length < limit &&
+    currentOffset < totalCount &&
+    hasMoreCandidates
+  ) {
+    const chunkResults = await client.zRange(
+      targetKey,
+      currentOffset,
+      currentOffset + SCAN_CHUNK_SIZE - 1,
+      {
+        by: 'rank',
+        reverse: true,
+      }
+    );
 
-  const nextOffset = offset + limit;
+    if (chunkResults.length === 0) {
+      break;
+    }
+
+    currentOffset += chunkResults.length;
+    const ids = chunkResults.map((r) => r.member);
+    const loaded = await getGalleryItems(ids, client);
+
+    for (const item of loaded) {
+      if (matchesTimelineFilters(item, params)) {
+        matchedItems.push(item);
+        if (matchedItems.length >= limit) {
+          break;
+        }
+      }
+    }
+
+    if (chunkResults.length < SCAN_CHUNK_SIZE) {
+      hasMoreCandidates = false;
+    }
+  }
+
+  const hasMore = currentOffset < totalCount;
 
   return {
-    items: visibleItems,
-    nextCursor: hasMore ? createCursor(nextOffset) : undefined,
+    items: matchedItems,
+    nextCursor: hasMore ? createCursor(currentOffset) : undefined,
     hasMore,
     totalCount,
+  };
+};
+
+export const getTaxonomyCounts = async (
+  client: RedisClientContract = redis
+): Promise<{
+  disciplines: Record<Discipline | 'untagged', number>;
+  impacts: Record<Impact | 'untagged', number>;
+}> => {
+  const [
+    electromagnetics,
+    mechanics,
+    biology,
+    mathematics,
+    arts,
+    materials,
+    untaggedDiscipline,
+    self,
+    home,
+    friends,
+    government,
+    untaggedImpact,
+  ] = await Promise.all([
+    client.zCard(REDIS_KEYS.idxDiscipline('Electromagnetics')),
+    client.zCard(REDIS_KEYS.idxDiscipline('Mechanics')),
+    client.zCard(REDIS_KEYS.idxDiscipline('Biology')),
+    client.zCard(REDIS_KEYS.idxDiscipline('Mathematics')),
+    client.zCard(REDIS_KEYS.idxDiscipline('Arts')),
+    client.zCard(REDIS_KEYS.idxDiscipline('Materials')),
+    client.zCard(REDIS_KEYS.idxDisciplineUntagged()),
+    client.zCard(REDIS_KEYS.idxImpact('Self')),
+    client.zCard(REDIS_KEYS.idxImpact('Home')),
+    client.zCard(REDIS_KEYS.idxImpact('Friends')),
+    client.zCard(REDIS_KEYS.idxImpact('Government')),
+    client.zCard(REDIS_KEYS.idxImpactUntagged()),
+  ]);
+
+  return {
+    disciplines: {
+      Electromagnetics: electromagnetics,
+      Mechanics: mechanics,
+      Biology: biology,
+      Mathematics: mathematics,
+      Arts: arts,
+      Materials: materials,
+      untagged: untaggedDiscipline,
+    },
+    impacts: {
+      Self: self,
+      Home: home,
+      Friends: friends,
+      Government: government,
+      untagged: untaggedImpact,
+    },
   };
 };
 
 export const getTimelineSummary = async (
   client: RedisClientContract = redis
 ): Promise<TimelineSummary> => {
-  const [countsRecord, topics] = await Promise.all([
+  const [countsRecord, topics, taxonomyCounts] = await Promise.all([
     client.hGetAll(REDIS_KEYS.timelineCounts()),
     getTopicCounts(client),
+    getTaxonomyCounts(client),
   ]);
   const yearMap = new Map<number, YearSummary>();
   let totalCount = 0;
@@ -500,6 +914,8 @@ export const getTimelineSummary = async (
     years,
     totalCount,
     topics,
+    disciplines: taxonomyCounts.disciplines,
+    impacts: taxonomyCounts.impacts,
   };
 };
 

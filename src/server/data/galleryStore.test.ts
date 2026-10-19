@@ -1,15 +1,19 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { GalleryItem } from '../../shared/types.js';
 import {
+  getCrosspostParentChild,
   getGalleryItem,
   getGalleryItems,
   getJobState,
   getPlacesHierarchy,
   getPlacesSummary,
+  getTaxonomyCounts,
   getTimelinePage,
   getTimelineSummary,
   getTopicCounts,
   getUnplacedCount,
+  isCrosspostDuplicate,
+  recordCrosspostDuplicate,
   REDIS_KEYS,
   removeGalleryItem,
   saveGalleryItem,
@@ -18,6 +22,7 @@ import {
   setJobState,
   tokenizeTitle,
   updateGalleryItemLocation,
+  updateGalleryItemTags,
   type RedisClientContract,
 } from './galleryStore.js';
 import { createMockRedis } from './mockRedis.js';
@@ -34,6 +39,11 @@ const createSampleItem = (override?: Partial<GalleryItem>): GalleryItem => ({
     width: 1920,
     height: 1080,
   },
+  disciplines: ['Biology'],
+  disciplinesSource: 'poster-tagged',
+  impacts: ['Home'],
+  impactsSource: 'poster-tagged',
+  isCrosspost: false,
   topic: 'science',
   topicSource: 'flair',
   place: {
@@ -520,6 +530,189 @@ describe('GalleryStore', () => {
       expect(japan?.name).toBe('Japan');
       expect(japan?.count).toBe(2);
       expect(japan?.children).toHaveLength(2); // Tokyo and Osaka regions
+    });
+  });
+
+  describe('Chimera Taxonomy Indexing and Summaries', () => {
+    it('indexes items by discipline and impact sets, including untagged buckets', async () => {
+      const item1 = createSampleItem({
+        id: 't3_bio',
+        disciplines: ['Biology', 'Materials'],
+        disciplinesSource: 'poster-tagged',
+        impacts: ['Home'],
+        impactsSource: 'poster-tagged',
+      });
+      const item2 = createSampleItem({
+        id: 't3_untagged',
+        disciplines: [],
+        disciplinesSource: 'untagged',
+        impacts: [],
+        impactsSource: 'untagged',
+      });
+
+      await saveGalleryItem(item1, mockRedis);
+      await saveGalleryItem(item2, mockRedis);
+
+      const taxonomyCounts = await getTaxonomyCounts(mockRedis);
+      expect(taxonomyCounts.disciplines.Biology).toBe(1);
+      expect(taxonomyCounts.disciplines.Materials).toBe(1);
+      expect(taxonomyCounts.disciplines.Mechanics).toBe(0);
+      expect(taxonomyCounts.disciplines.untagged).toBe(1);
+
+      expect(taxonomyCounts.impacts.Home).toBe(1);
+      expect(taxonomyCounts.impacts.Government).toBe(0);
+      expect(taxonomyCounts.impacts.untagged).toBe(1);
+
+      const timelineSummary = await getTimelineSummary(mockRedis);
+      expect(timelineSummary.disciplines?.Biology).toBe(1);
+      expect(timelineSummary.impacts?.Home).toBe(1);
+      expect(timelineSummary.disciplines?.untagged).toBe(1);
+    });
+
+    it('updates item tags with priority enforcement', async () => {
+      const item = createSampleItem({
+        id: 't3_prio',
+        disciplines: ['Biology'],
+        disciplinesSource: 'auto-suggested',
+        impacts: ['Self'],
+        impactsSource: 'auto-suggested',
+      });
+      await saveGalleryItem(item, mockRedis);
+
+      // 1. Poster tag can override auto-suggested
+      const updatedByPoster = await updateGalleryItemTags(
+        't3_prio',
+        {
+          disciplines: ['Mechanics'],
+          disciplinesSource: 'poster-tagged',
+          impacts: ['Home'],
+          impactsSource: 'poster-tagged',
+        },
+        mockRedis
+      );
+      expect(updatedByPoster?.disciplines).toEqual(['Mechanics']);
+      expect(updatedByPoster?.disciplinesSource).toBe('poster-tagged');
+      expect(updatedByPoster?.impacts).toEqual(['Home']);
+
+      // 2. Mod tag can override poster tag
+      const updatedByMod = await updateGalleryItemTags(
+        't3_prio',
+        {
+          disciplines: ['Electromagnetics', 'Materials'],
+          disciplinesSource: 'mod-verified',
+          impacts: ['Government'],
+          impactsSource: 'mod-verified',
+        },
+        mockRedis
+      );
+      expect(updatedByMod?.disciplines).toEqual(['Electromagnetics', 'Materials']);
+      expect(updatedByMod?.disciplinesSource).toBe('mod-verified');
+      expect(updatedByMod?.impacts).toEqual(['Government']);
+
+      // 3. Auto-suggested CANNOT override mod-verified
+      const rejectedAuto = await updateGalleryItemTags(
+        't3_prio',
+        {
+          disciplines: ['Arts'],
+          disciplinesSource: 'auto-suggested',
+        },
+        mockRedis
+      );
+      expect(rejectedAuto?.disciplines).toEqual(['Electromagnetics', 'Materials']);
+      expect(rejectedAuto?.disciplinesSource).toBe('mod-verified');
+    });
+
+    it('cleans up discipline and impact indexes when item is removed', async () => {
+      const item = createSampleItem({
+        id: 't3_del',
+        disciplines: ['Biology'],
+        impacts: ['Home'],
+      });
+      await saveGalleryItem(item, mockRedis);
+
+      const countsBefore = await getTaxonomyCounts(mockRedis);
+      expect(countsBefore.disciplines.Biology).toBe(1);
+      expect(countsBefore.impacts.Home).toBe(1);
+
+      await removeGalleryItem('t3_del', mockRedis);
+
+      const countsAfter = await getTaxonomyCounts(mockRedis);
+      expect(countsAfter.disciplines.Biology).toBe(0);
+      expect(countsAfter.impacts.Home).toBe(0);
+    });
+  });
+
+  describe('Crosspost deduplication', () => {
+    it('records and checks crosspost parent deduplication in O(1)', async () => {
+      const parentId = 't3_parent_123';
+      expect(await isCrosspostDuplicate(parentId, mockRedis)).toBe(false);
+
+      const crosspostItem = createSampleItem({
+        id: 't3_crosspost_1',
+        isCrosspost: true,
+        crosspostParentId: parentId,
+        originalSubreddit: 'physics',
+        originalAuthor: 'einstein',
+      });
+      await saveGalleryItem(crosspostItem, mockRedis);
+
+      expect(await isCrosspostDuplicate(parentId, mockRedis)).toBe(true);
+      expect(await getCrosspostParentChild(parentId, mockRedis)).toBe(
+        't3_crosspost_1'
+      );
+
+      // Record a second duplicate crosspost attempt
+      await recordCrosspostDuplicate(parentId, 't3_crosspost_2', mockRedis);
+
+      // Removing the original crosspost item removes the parent dedupe mapping
+      await removeGalleryItem('t3_crosspost_1', mockRedis);
+      expect(await isCrosspostDuplicate(parentId, mockRedis)).toBe(false);
+    });
+  });
+
+  describe('Complex Taxonomy and Multi-Filter Paging', () => {
+    it('filters by multiple disciplines (OR semantics) and impacts (AND across groups)', async () => {
+      const item1 = createSampleItem({
+        id: 't3_c1',
+        createdAt: 1700000003,
+        disciplines: ['Biology'],
+        impacts: ['Home'],
+      });
+      const item2 = createSampleItem({
+        id: 't3_c2',
+        createdAt: 1700000002,
+        disciplines: ['Materials'],
+        impacts: ['Home'],
+      });
+      const item3 = createSampleItem({
+        id: 't3_c3',
+        createdAt: 1700000001,
+        disciplines: ['Biology'],
+        impacts: ['Government'],
+      });
+      const item4 = createSampleItem({
+        id: 't3_c4',
+        createdAt: 1700000000,
+        disciplines: ['Mechanics'],
+        impacts: ['Home'],
+      });
+
+      await saveGalleryItem(item1, mockRedis);
+      await saveGalleryItem(item2, mockRedis);
+      await saveGalleryItem(item3, mockRedis);
+      await saveGalleryItem(item4, mockRedis);
+
+      // Filter: (Biology OR Materials) AND (Home) -> should match item1 and item2
+      const page = await getTimelinePage(
+        {
+          disciplines: ['Biology', 'Materials'],
+          impacts: ['Home'],
+        },
+        mockRedis
+      );
+
+      expect(page.items).toHaveLength(2);
+      expect(page.items.map((i) => i.id)).toEqual(['t3_c1', 't3_c2']);
     });
   });
 });

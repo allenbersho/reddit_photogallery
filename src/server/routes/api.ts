@@ -6,20 +6,34 @@ import type {
   InitResponse,
 } from '../../shared/api.js';
 import type {
+  DisciplineFilter,
   GalleryItem,
+  ImpactFilter,
   PlaceHierarchyNode,
   PlacesSummary,
   PlaceStatus,
+  TagItemRequest,
   TimelinePage,
   TimelineQueryParams,
   TimelineSummary,
   Topic,
 } from '../../shared/types.js';
+import {
+  isDiscipline,
+  isImpact,
+  validateDisciplines,
+  validateImpacts,
+  canOverrideTagSource,
+  type Discipline,
+  type Impact,
+  type TagSource,
+} from '../../shared/taxonomy.js';
 import { resolvePlace, toPlaceLocation } from '../core/placeResolver.js';
 import {
   getGalleryItem,
   getPlacesHierarchy,
   getPlacesSummary,
+  getTaxonomyCounts,
   getTimelinePage,
   getTimelineSummary,
   getUserFavorites,
@@ -28,8 +42,15 @@ import {
   setGalleryItemModHidden,
   toggleUserFavorite,
   updateGalleryItemLocation,
+  updateGalleryItemTags,
   type RedisClientContract,
 } from '../data/galleryStore.js';
+import {
+  getMigrationStatus,
+  resetMigration,
+  runMigrationJob,
+  type MigrationProgress,
+} from '../scheduler/migration.js';
 
 type ErrorResponse = {
   status: 'error';
@@ -103,6 +124,30 @@ const isPlaceType = (
   value === 'city' ||
   value === 'unplaced';
 
+const isDisciplineFilter = (value: string): value is DisciplineFilter =>
+  value === 'untagged' || isDiscipline(value);
+
+const isImpactFilter = (value: string): value is ImpactFilter =>
+  value === 'untagged' || isImpact(value);
+
+const parseMultiParam = (single?: string, multi?: string[]): string[] => {
+  const result: string[] = [];
+  if (multi && multi.length > 0) {
+    for (const val of multi) {
+      for (const piece of val.split(',')) {
+        const trimmed = piece.trim();
+        if (trimmed) result.push(trimmed);
+      }
+    }
+  } else if (single) {
+    for (const piece of single.split(',')) {
+      const trimmed = piece.trim();
+      if (trimmed) result.push(trimmed);
+    }
+  }
+  return result;
+};
+
 export type UsernameProvider = () => Promise<string | undefined>;
 
 export const defaultUsernameProvider: UsernameProvider = getCallerUsername;
@@ -139,11 +184,22 @@ export const createApiRouter = (
         reddit.getCurrentUsername(),
       ]);
 
+      const subredditName = getSubredditNameSafely();
+      let isMod = false;
+      if (username) {
+        try {
+          isMod = await isModerator(username, subredditName);
+        } catch {
+          isMod = false;
+        }
+      }
+
       return c.json<InitResponse>({
         type: 'init',
         postId: postId,
         count: count ? parseInt(count, 10) : 0,
         username: username ?? 'anonymous',
+        isModerator: isMod,
       });
     } catch (error) {
       console.error(`API Init Error for post ${postId}:`, error);
@@ -284,6 +340,66 @@ export const createApiRouter = (
     );
   });
 
+  // Moderator endpoint: Migration status
+  router.get('/gallery/migration/status', async (c) => {
+    const username = await getUsername();
+    const subredditName = getSubredditNameSafely();
+
+    const authorized = await isModerator(username, subredditName);
+    if (!authorized) {
+      return c.json<ErrorResponse>(
+        {
+          status: 'error',
+          message: 'Moderator permissions required',
+        },
+        403
+      );
+    }
+
+    const status = await getMigrationStatus(redisClient);
+    return c.json<MigrationProgress>(status, 200);
+  });
+
+  // Moderator endpoint: Reset migration
+  router.post('/gallery/migration/reset', async (c) => {
+    const username = await getUsername();
+    const subredditName = getSubredditNameSafely();
+
+    const authorized = await isModerator(username, subredditName);
+    if (!authorized) {
+      return c.json<ErrorResponse>(
+        {
+          status: 'error',
+          message: 'Moderator permissions required',
+        },
+        403
+      );
+    }
+
+    await resetMigration(redisClient);
+    return c.json({ status: 'ok', message: 'Migration reset successfully' }, 200);
+  });
+
+  // Moderator endpoint: Trigger migration batch manually
+  router.post('/gallery/migration/run', async (c) => {
+    const username = await getUsername();
+    const subredditName = getSubredditNameSafely();
+
+    const authorized = await isModerator(username, subredditName);
+    if (!authorized) {
+      return c.json<ErrorResponse>(
+        {
+          status: 'error',
+          message: 'Moderator permissions required',
+        },
+        403
+      );
+    }
+
+    const result = await runMigrationJob(redisClient);
+    return c.json(result, 200);
+  });
+
   // Timeline page
   router.get('/gallery/timeline', async (c) => {
     const limitQuery = c.req.query('limit');
@@ -372,8 +488,48 @@ export const createApiRouter = (
       includeHidden = await isModerator(username, subredditName);
     }
 
+    const disciplinesRaw = parseMultiParam(
+      c.req.query('disciplines'),
+      c.req.queries('disciplines')
+    );
+    let disciplines: DisciplineFilter[] | undefined;
+    if (disciplinesRaw.length > 0) {
+      const invalid = disciplinesRaw.find((d) => !isDisciplineFilter(d));
+      if (invalid) {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message: `Invalid discipline: ${invalid}`,
+          },
+          400
+        );
+      }
+      disciplines = disciplinesRaw.filter(isDisciplineFilter);
+    }
+
+    const impactsRaw = parseMultiParam(
+      c.req.query('impacts'),
+      c.req.queries('impacts')
+    );
+    let impacts: ImpactFilter[] | undefined;
+    if (impactsRaw.length > 0) {
+      const invalid = impactsRaw.find((imp) => !isImpactFilter(imp));
+      if (invalid) {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message: `Invalid impact: ${invalid}`,
+          },
+          400
+        );
+      }
+      impacts = impactsRaw.filter(isImpactFilter);
+    }
+
     const queryParams: TimelineQueryParams = {
       cursor,
+      disciplines,
+      impacts,
       includeHidden,
       limit,
       month,
@@ -411,6 +567,12 @@ export const createApiRouter = (
     return c.json<PlacesSummary>(summary, 200);
   });
 
+  // Taxonomy summary (counts per discipline and impact)
+  router.get('/gallery/taxonomy/summary', async (c) => {
+    const counts = await getTaxonomyCounts(redisClient);
+    return c.json(counts, 200);
+  });
+
   // Items for unplaced posts
   router.get('/gallery/places/unplaced/items', async (c) => {
     const limitQuery = c.req.query('limit');
@@ -436,9 +598,49 @@ export const createApiRouter = (
       includeHidden = await isModerator(username, subredditName);
     }
 
+    const disciplinesRaw = parseMultiParam(
+      c.req.query('disciplines'),
+      c.req.queries('disciplines')
+    );
+    let disciplines: DisciplineFilter[] | undefined;
+    if (disciplinesRaw.length > 0) {
+      const invalid = disciplinesRaw.find((d) => !isDisciplineFilter(d));
+      if (invalid) {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message: `Invalid discipline: ${invalid}`,
+          },
+          400
+        );
+      }
+      disciplines = disciplinesRaw.filter(isDisciplineFilter);
+    }
+
+    const impactsRaw = parseMultiParam(
+      c.req.query('impacts'),
+      c.req.queries('impacts')
+    );
+    let impacts: ImpactFilter[] | undefined;
+    if (impactsRaw.length > 0) {
+      const invalid = impactsRaw.find((imp) => !isImpactFilter(imp));
+      if (invalid) {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message: `Invalid impact: ${invalid}`,
+          },
+          400
+        );
+      }
+      impacts = impactsRaw.filter(isImpactFilter);
+    }
+
     const page = await getTimelinePage(
       {
         cursor,
+        disciplines,
+        impacts,
         includeHidden,
         limit,
         placeType: 'unplaced',
@@ -491,9 +693,49 @@ export const createApiRouter = (
       includeHidden = await isModerator(username, subredditName);
     }
 
+    const disciplinesRaw = parseMultiParam(
+      c.req.query('disciplines'),
+      c.req.queries('disciplines')
+    );
+    let disciplines: DisciplineFilter[] | undefined;
+    if (disciplinesRaw.length > 0) {
+      const invalid = disciplinesRaw.find((d) => !isDisciplineFilter(d));
+      if (invalid) {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message: `Invalid discipline: ${invalid}`,
+          },
+          400
+        );
+      }
+      disciplines = disciplinesRaw.filter(isDisciplineFilter);
+    }
+
+    const impactsRaw = parseMultiParam(
+      c.req.query('impacts'),
+      c.req.queries('impacts')
+    );
+    let impacts: ImpactFilter[] | undefined;
+    if (impactsRaw.length > 0) {
+      const invalid = impactsRaw.find((imp) => !isImpactFilter(imp));
+      if (invalid) {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message: `Invalid impact: ${invalid}`,
+          },
+          400
+        );
+      }
+      impacts = impactsRaw.filter(isImpactFilter);
+    }
+
     const page = await getTimelinePage(
       {
         cursor,
+        disciplines,
+        impacts,
         includeHidden,
         limit,
         placeKey,
@@ -666,6 +908,151 @@ export const createApiRouter = (
 
     return c.json<{ success: boolean; item: GalleryItem }>(
       { success: true, item: updated },
+      200
+    );
+  });
+
+  // Tag or update disciplines, impacts, and location for a gallery item
+  router.post('/gallery/:id/tags', async (c) => {
+    const id = c.req.param('id');
+    const body = await c.req.json<TagItemRequest>();
+
+    const item = await getGalleryItem(id, redisClient);
+    if (!item) {
+      return c.json<ErrorResponse>(
+        { status: 'error', message: 'Gallery item not found' },
+        404
+      );
+    }
+
+    const username = await getUsername();
+    const subredditName = getSubredditNameSafely();
+    const isAuthor =
+      username !== undefined &&
+      item.author.toLowerCase() === username.toLowerCase();
+    const isMod = await isModerator(username, subredditName);
+
+    if (!isAuthor && !isMod) {
+      return c.json<ErrorResponse>(
+        {
+          status: 'error',
+          message: 'Only the author or moderators can tag this item',
+        },
+        403
+      );
+    }
+
+    const tagSource: TagSource = isMod ? 'mod-verified' : 'poster-tagged';
+
+    let validDisciplines: Discipline[] | undefined;
+    if (body.disciplines !== undefined) {
+      if (
+        !Array.isArray(body.disciplines) ||
+        body.disciplines.some((d) => !isDiscipline(d))
+      ) {
+        return c.json<ErrorResponse>(
+          { status: 'error', message: 'Invalid discipline in request' },
+          400
+        );
+      }
+      if (!canOverrideTagSource(item.disciplinesSource, tagSource)) {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message: 'Cannot override moderator-verified discipline tags',
+          },
+          403
+        );
+      }
+      validDisciplines = validateDisciplines(body.disciplines);
+    }
+
+    let validImpacts: Impact[] | undefined;
+    if (body.impacts !== undefined) {
+      if (
+        !Array.isArray(body.impacts) ||
+        body.impacts.some((imp) => !isImpact(imp))
+      ) {
+        return c.json<ErrorResponse>(
+          { status: 'error', message: 'Invalid impact in request' },
+          400
+        );
+      }
+      if (!canOverrideTagSource(item.impactsSource, tagSource)) {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message: 'Cannot override moderator-verified impact tags',
+          },
+          403
+        );
+      }
+      validImpacts = validateImpacts(body.impacts);
+    }
+
+    if (body.disciplines !== undefined || body.impacts !== undefined) {
+      const tagUpdates: {
+        disciplines?: Discipline[];
+        disciplinesSource?: TagSource;
+        impacts?: Impact[];
+        impactsSource?: TagSource;
+      } = {};
+
+      if (body.disciplines !== undefined && validDisciplines !== undefined) {
+        tagUpdates.disciplines = validDisciplines;
+        tagUpdates.disciplinesSource =
+          validDisciplines.length > 0 ? tagSource : 'untagged';
+      }
+
+      if (body.impacts !== undefined && validImpacts !== undefined) {
+        tagUpdates.impacts = validImpacts;
+        tagUpdates.impactsSource =
+          validImpacts.length > 0 ? tagSource : 'untagged';
+      }
+
+      await updateGalleryItemTags(id, tagUpdates, redisClient);
+    }
+
+    if (body.location !== undefined && body.location.trim().length > 0) {
+      const resolved = resolvePlace(body.location.trim());
+      if (resolved.status === 'unresolved') {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message:
+              'Could not resolve place. Try "City, Country" (e.g. Tokyo, Japan)',
+          },
+          400
+        );
+      }
+      if (resolved.status === 'ambiguous') {
+        return c.json<ErrorResponse>(
+          {
+            status: 'error',
+            message:
+              'Ambiguous place. Please include country or region (e.g. Cambridge, UK or Cambridge, US)',
+          },
+          400
+        );
+      }
+
+      const placeStatus: PlaceStatus = isMod ? 'mod-verified' : 'poster-tagged';
+      const place = toPlaceLocation(resolved.place, placeStatus);
+
+      let takenAtEpoch: number | undefined;
+      if (body.takenDate && /^\d{4}-\d{2}-\d{2}$/.test(body.takenDate)) {
+        const parsedEpoch = Date.parse(body.takenDate);
+        if (!Number.isNaN(parsedEpoch)) {
+          takenAtEpoch = Math.floor(parsedEpoch / 1000);
+        }
+      }
+
+      await updateGalleryItemLocation(id, place, takenAtEpoch, redisClient);
+    }
+
+    const updatedItem = await getGalleryItem(id, redisClient);
+    return c.json<{ success: boolean; item: GalleryItem | null }>(
+      { success: true, item: updatedItem },
       200
     );
   });

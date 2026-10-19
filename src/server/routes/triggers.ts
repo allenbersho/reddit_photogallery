@@ -4,14 +4,24 @@ import type {
   OnPostCreateRequest,
   OnPostDeleteRequest,
 } from '@devvit/web/shared';
-import { context, redis } from '@devvit/web/server';
+import { context, reddit, redis } from '@devvit/web/server';
+import {
+  loadCrosspostSettings,
+} from '../core/crosspostSettings.js';
 import { createPost } from '../core/post.js';
-import { buildGalleryItemFromPost } from '../core/postCapture.js';
+import {
+  buildGalleryItemFromCrosspost,
+  buildGalleryItemFromPost,
+  type ChildPostInfo,
+  type RedditPostLike,
+} from '../core/postCapture.js';
 import {
   loadTopicRules,
   type SettingsClientContract,
 } from '../core/topicSettings.js';
 import {
+  isCrosspostDuplicate,
+  recordCrosspostDuplicate,
   removeGalleryItem,
   saveGalleryItem,
   type RedisClientContract,
@@ -22,9 +32,14 @@ export type TriggerResult = {
   message: string;
 };
 
+export type RedditClientForTriggers = {
+  getPostById(id: string): Promise<RedditPostLike | undefined>;
+};
+
 export const createTriggersRouter = (
   redisClient: RedisClientContract = redis,
-  settingsClient?: SettingsClientContract
+  settingsClient?: SettingsClientContract,
+  redditClient: RedditClientForTriggers = reddit
 ): Hono => {
   const router = new Hono();
 
@@ -66,6 +81,98 @@ export const createTriggersRouter = (
       }
 
       const rules = await loadTopicRules(settingsClient);
+      const crosspostSettings = await loadCrosspostSettings(settingsClient);
+
+      // Check if post is a crosspost
+      const crosspostParentId = input.post.crosspostParentId;
+      if (crosspostParentId && crosspostParentId.trim().length > 0) {
+        // Dedupe check
+        const isDupe = await isCrosspostDuplicate(
+          crosspostParentId,
+          redisClient
+        );
+        if (isDupe) {
+          await recordCrosspostDuplicate(
+            crosspostParentId,
+            input.post.id,
+            redisClient
+          );
+          return c.json<TriggerResult>(
+            {
+              status: 'success',
+              message: `Crosspost ${input.post.id} skipped: parent ${crosspostParentId} is already captured`,
+            },
+            200
+          );
+        }
+
+        try {
+          const parentPost = await redditClient.getPostById(crosspostParentId);
+          if (!parentPost) {
+            return c.json<TriggerResult>(
+              {
+                status: 'success',
+                message: `Crosspost ${input.post.id} skipped: parent ${crosspostParentId} not found`,
+              },
+              200
+            );
+          }
+
+          const childInfo: ChildPostInfo = {
+            id: input.post.id,
+            title: input.post.title,
+            permalink: input.post.permalink,
+            authorName: input.author?.name,
+            subredditName: input.subreddit?.name,
+            createdAt: input.post.createdAt,
+            nsfw: input.post.nsfw,
+            removed: input.post.deleted,
+            spam: input.post.spam,
+            flairText: input.post.linkFlair?.text,
+          };
+
+          const { item: crosspostGalleryItem, reason } =
+            buildGalleryItemFromCrosspost(
+              childInfo,
+              parentPost,
+              crosspostSettings,
+              rules
+            );
+
+          if (!crosspostGalleryItem) {
+            return c.json<TriggerResult>(
+              {
+                status: 'success',
+                message: `Crosspost ${input.post.id} skipped: ${reason}`,
+              },
+              200
+            );
+          }
+
+          await saveGalleryItem(crosspostGalleryItem, redisClient);
+          return c.json<TriggerResult>(
+            {
+              status: 'success',
+              message: `Captured crosspost ${crosspostGalleryItem.id} (original ${crosspostParentId}) into gallery`,
+            },
+            200
+          );
+        } catch (err) {
+          console.warn(
+            `Parent post ${crosspostParentId} cannot be read; skipping crosspost ${input.post.id}:`,
+            err
+          );
+          return c.json<TriggerResult>(
+            {
+              status: 'success',
+              message: `Crosspost ${input.post.id} skipped: parent post ${crosspostParentId} inaccessible`,
+            },
+            200
+          );
+        }
+      }
+
+      // Plain native post
       const galleryItem = buildGalleryItemFromPost(
         input.post,
         input.author?.name,

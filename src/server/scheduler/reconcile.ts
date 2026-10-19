@@ -38,6 +38,7 @@ export const runReconcileJob = async (
   let purgedCount = 0;
   for (const item of page.items) {
     try {
+      // 1. Verify child post in installed subreddit
       const post = await redditClient.getPostById(item.id);
       if (
         !post ||
@@ -48,6 +49,32 @@ export const runReconcileJob = async (
       ) {
         await removeGalleryItem(item.id, redisClient);
         purgedCount += 1;
+        continue;
+      }
+
+      // 2. If crosspost, verify original parent post
+      if (item.isCrosspost && item.crosspostParentId) {
+        try {
+          const parentPost = await redditClient.getPostById(
+            item.crosspostParentId
+          );
+          if (
+            !parentPost ||
+            parentPost.removed ||
+            parentPost.spam ||
+            parentPost.nsfw ||
+            parentPost.authorName === '[deleted]'
+          ) {
+            await removeGalleryItem(item.id, redisClient);
+            purgedCount += 1;
+            continue;
+          }
+        } catch {
+          // Parent post thrown error (inaccessible, private, banned, deleted)
+          await removeGalleryItem(item.id, redisClient);
+          purgedCount += 1;
+          continue;
+        }
       }
     } catch {
       // If fetching post throws (e.g. 404 or deleted from reddit), remove from gallery

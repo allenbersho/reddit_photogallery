@@ -1,6 +1,11 @@
 import { context, reddit } from '@devvit/web/server';
 import {
+  loadCrosspostSettings,
+} from '../core/crosspostSettings.js';
+import {
+  buildGalleryItemFromCrosspost,
   buildGalleryItemFromRedditPost,
+  type ChildPostInfo,
   type RedditPostLike,
 } from '../core/postCapture.js';
 import {
@@ -9,6 +14,8 @@ import {
 } from '../core/topicSettings.js';
 import {
   getJobState,
+  isCrosspostDuplicate,
+  recordCrosspostDuplicate,
   saveGalleryItem,
   setJobState,
   type RedisClientContract,
@@ -29,6 +36,7 @@ export type RedditClientForBackfill = {
   }): {
     all(): Promise<RedditPostLike[]>;
   };
+  getPostById?(id: string): Promise<RedditPostLike | undefined>;
 };
 
 const getSubredditNameSafely = (): string | undefined => {
@@ -49,6 +57,7 @@ export const runBackfillJob = async (
   const cursor = await getJobState('backfill_cursor', redisClient);
   const targetSubreddit = subredditName || getSubredditNameSafely();
   const rules = await loadTopicRules(settingsClient);
+  const crosspostSettings = await loadCrosspostSettings(settingsClient);
 
   const posts = await redditClient
     .getNewPosts({
@@ -69,6 +78,64 @@ export const runBackfillJob = async (
 
   let indexedCount = 0;
   for (const post of posts) {
+    // 1. Check if post is a crosspost
+    if (post.crosspostParentId && post.crosspostParentId.trim().length > 0) {
+      const isDupe = await isCrosspostDuplicate(
+        post.crosspostParentId,
+        redisClient
+      );
+      if (isDupe) {
+        await recordCrosspostDuplicate(
+          post.crosspostParentId,
+          post.id,
+          redisClient
+        );
+        continue;
+      }
+
+      try {
+        const getParent =
+          redditClient.getPostById ??
+          ((id: string) => reddit.getPostById(id as `t3_${string}`));
+        const parentPost = await getParent(post.crosspostParentId);
+        if (!parentPost) {
+          continue;
+        }
+
+        const childInfo: ChildPostInfo = {
+          id: post.id,
+          title: post.title,
+          permalink: post.permalink,
+          authorName: post.authorName,
+          subredditName: post.subredditName,
+          createdAt: post.createdAt,
+          nsfw: post.nsfw,
+          removed: post.removed,
+          spam: post.spam,
+          flairText: post.flair?.text,
+        };
+
+        const { item: crosspostItem } = buildGalleryItemFromCrosspost(
+          childInfo,
+          parentPost,
+          crosspostSettings,
+          rules
+        );
+
+        if (crosspostItem) {
+          await saveGalleryItem(crosspostItem, redisClient);
+          indexedCount += 1;
+        }
+      } catch (err) {
+        console.warn(
+          `Backfill: failed to resolve parent ${post.crosspostParentId} for crosspost ${post.id}:`,
+          err
+        );
+      }
+      continue;
+    }
+
+    // 2. Native image post
     const item = buildGalleryItemFromRedditPost(post, rules);
     if (item) {
       await saveGalleryItem(item, redisClient);

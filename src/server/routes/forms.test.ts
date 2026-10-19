@@ -116,6 +116,11 @@ const createSampleItem = (override?: Partial<GalleryItem>): GalleryItem => ({
     width: 0,
     height: 0,
   },
+  disciplines: ['Biology'],
+  disciplinesSource: 'poster-tagged',
+  impacts: ['Home'],
+  impactsSource: 'poster-tagged',
+  isCrosspost: false,
   topic: 'science',
   topicSource: 'flair',
   isModHidden: false,
@@ -244,6 +249,241 @@ describe('Forms router', () => {
       expect(res.status).toBe(400);
       const body: { showToast?: string } = await res.json();
       expect(body.showToast).toContain('Could not resolve place');
+    });
+
+    it('allows author to tag disciplines and impacts on their own post', async () => {
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_poster_post',
+          author: 'alice',
+          disciplines: [],
+          disciplinesSource: 'untagged',
+          impacts: [],
+          impactsSource: 'untagged',
+        }),
+        mockRedis
+      );
+
+      const router = createFormsRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false),
+        vi.fn().mockResolvedValue('alice')
+      );
+
+      const res = await router.request('/tag-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postId: 't3_poster_post',
+          disciplines: 'Biology, Materials',
+          impacts: 'Self, Home',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body: { showToast?: string } = await res.json();
+      expect(body.showToast).toBe('Tags updated successfully');
+
+      const updated = await getGalleryItem('t3_poster_post', mockRedis);
+      expect(updated?.disciplines).toEqual(['Biology', 'Materials']);
+      expect(updated?.disciplinesSource).toBe('poster-tagged');
+      expect(updated?.impacts).toEqual(['Self', 'Home']);
+      expect(updated?.impactsSource).toBe('poster-tagged');
+    });
+
+    it('allows moderator to override and verify tags on any post', async () => {
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_mod_override',
+          author: 'someone_else',
+          disciplines: ['Arts'],
+          disciplinesSource: 'poster-tagged',
+          impacts: ['Friends'],
+          impactsSource: 'poster-tagged',
+        }),
+        mockRedis
+      );
+
+      const router = createFormsRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(true),
+        vi.fn().mockResolvedValue('mod_user')
+      );
+
+      const res = await router.request('/tag-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postId: 't3_mod_override',
+          disciplines: 'Electromagnetics, Mechanics',
+          impacts: 'Government',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const updated = await getGalleryItem('t3_mod_override', mockRedis);
+      expect(updated?.disciplines).toEqual(['Electromagnetics', 'Mechanics']);
+      expect(updated?.disciplinesSource).toBe('mod-verified');
+      expect(updated?.impacts).toEqual(['Government']);
+      expect(updated?.impactsSource).toBe('mod-verified');
+    });
+
+    it('rejects poster attempt to override moderator-verified disciplines', async () => {
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_mod_locked',
+          author: 'alice',
+          disciplines: ['Electromagnetics'],
+          disciplinesSource: 'mod-verified',
+          impacts: ['Government'],
+          impactsSource: 'mod-verified',
+        }),
+        mockRedis
+      );
+
+      const router = createFormsRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false),
+        vi.fn().mockResolvedValue('alice')
+      );
+
+      const res = await router.request('/tag-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postId: 't3_mod_locked',
+          disciplines: 'Biology',
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const body: { showToast?: string } = await res.json();
+      expect(body.showToast).toContain(
+        'Cannot override moderator-verified discipline tags'
+      );
+    });
+
+    it('rejects poster attempt to override moderator-verified impacts', async () => {
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_mod_locked_imp',
+          author: 'alice',
+          disciplines: ['Biology'],
+          disciplinesSource: 'poster-tagged',
+          impacts: ['Government'],
+          impactsSource: 'mod-verified',
+        }),
+        mockRedis
+      );
+
+      const router = createFormsRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false),
+        vi.fn().mockResolvedValue('alice')
+      );
+
+      const res = await router.request('/tag-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postId: 't3_mod_locked_imp',
+          impacts: 'Home',
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const body: { showToast?: string } = await res.json();
+      expect(body.showToast).toContain(
+        'Cannot override moderator-verified impact tags'
+      );
+    });
+
+    it('returns error toast when discipline is invalid', async () => {
+      await saveGalleryItem(createSampleItem({ author: 'alice' }), mockRedis);
+      const router = createFormsRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false),
+        vi.fn().mockResolvedValue('alice')
+      );
+
+      const res = await router.request('/tag-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postId: 't3_form_target',
+          disciplines: 'Astrology, Biology',
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body: { showToast?: string } = await res.json();
+      expect(body.showToast).toContain('Invalid discipline');
+    });
+
+    it('returns error toast when impact is invalid', async () => {
+      await saveGalleryItem(createSampleItem({ author: 'alice' }), mockRedis);
+      const router = createFormsRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false),
+        vi.fn().mockResolvedValue('alice')
+      );
+
+      const res = await router.request('/tag-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postId: 't3_form_target',
+          impacts: 'Galaxy',
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body: { showToast?: string } = await res.json();
+      expect(body.showToast).toContain('Invalid impact');
+    });
+
+    it('updates both tags and location simultaneously', async () => {
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_both',
+          author: 'alice',
+          disciplines: [],
+          disciplinesSource: 'untagged',
+        }),
+        mockRedis
+      );
+
+      const router = createFormsRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false),
+        vi.fn().mockResolvedValue('alice')
+      );
+
+      const res = await router.request('/tag-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          postId: 't3_both',
+          disciplines: ['Arts', 'Mathematics'],
+          impacts: ['Friends'],
+          location: 'Tokyo, Japan',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body: { showToast?: string } = await res.json();
+      expect(body.showToast).toContain(
+        'Tags and location updated: Tokyo, Japan'
+      );
+
+      const updated = await getGalleryItem('t3_both', mockRedis);
+      expect(updated?.disciplines).toEqual(['Arts', 'Mathematics']);
+      expect(updated?.disciplinesSource).toBe('poster-tagged');
+      expect(updated?.impacts).toEqual(['Friends']);
+      expect(updated?.impactsSource).toBe('poster-tagged');
+      expect(updated?.place?.city).toBe('Tokyo');
+      expect(updated?.place?.country).toBe('JP');
+      expect(updated?.place?.status).toBe('poster-tagged');
     });
   });
 });

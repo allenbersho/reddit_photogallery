@@ -154,6 +154,11 @@ const createSampleItem = (override?: Partial<GalleryItem>): GalleryItem => ({
     width: 0,
     height: 0,
   },
+  disciplines: ['Biology'],
+  disciplinesSource: 'poster-tagged',
+  impacts: ['Home'],
+  impactsSource: 'poster-tagged',
+  isCrosspost: false,
   topic: 'science',
   topicSource: 'flair',
   isModHidden: false,
@@ -729,6 +734,262 @@ describe('API router moderator actions', () => {
         method: 'POST',
       });
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe('Taxonomy Filtering & Endpoints', () => {
+    beforeEach(async () => {
+      // Seed varied items
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_bio_home',
+          title: 'Bio Home Photo',
+          author: 'alice',
+          disciplines: ['Biology'],
+          disciplinesSource: 'poster-tagged',
+          impacts: ['Home'],
+          impactsSource: 'poster-tagged',
+          createdAt: 1000,
+        }),
+        mockRedis
+      );
+
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_mat_self',
+          title: 'Materials Self Photo',
+          author: 'bob',
+          disciplines: ['Materials'],
+          disciplinesSource: 'poster-tagged',
+          impacts: ['Self'],
+          impactsSource: 'poster-tagged',
+          createdAt: 2000,
+        }),
+        mockRedis
+      );
+
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_em_friends',
+          title: 'Electromagnetics Friends Photo',
+          author: 'charlie',
+          disciplines: ['Electromagnetics'],
+          disciplinesSource: 'mod-verified',
+          impacts: ['Friends'],
+          impactsSource: 'mod-verified',
+          createdAt: 3000,
+        }),
+        mockRedis
+      );
+
+      await saveGalleryItem(
+        createSampleItem({
+          id: 't3_untagged_item',
+          title: 'Untagged Photo',
+          author: 'dave',
+          disciplines: [],
+          disciplinesSource: 'untagged',
+          impacts: [],
+          impactsSource: 'untagged',
+          createdAt: 4000,
+        }),
+        mockRedis
+      );
+    });
+
+    it('filters timeline by single discipline', async () => {
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/timeline?disciplines=Biology');
+      expect(res.status).toBe(200);
+      const page: TimelinePage = await res.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.id).toBe('t3_bio_home');
+    });
+
+    it('filters timeline by multiple disciplines (OR within group)', async () => {
+      const router = createApiRouter(mockRedis);
+      const res = await router.request(
+        '/gallery/timeline?disciplines=Biology,Materials'
+      );
+      expect(res.status).toBe(200);
+      const page: TimelinePage = await res.json();
+      const ids = page.items.map((i) => i.id);
+      expect(ids).toContain('t3_bio_home');
+      expect(ids).toContain('t3_mat_self');
+      expect(ids).not.toContain('t3_em_friends');
+    });
+
+    it('filters timeline by single impact', async () => {
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/timeline?impacts=Self');
+      expect(res.status).toBe(200);
+      const page: TimelinePage = await res.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.id).toBe('t3_mat_self');
+    });
+
+    it('filters timeline by discipline AND impact (cross-group AND)', async () => {
+      const router = createApiRouter(mockRedis);
+      // Biology + Self has no match
+      const resNone = await router.request(
+        '/gallery/timeline?disciplines=Biology&impacts=Self'
+      );
+      expect(resNone.status).toBe(200);
+      const pageNone: TimelinePage = await resNone.json();
+      expect(pageNone.items).toHaveLength(0);
+
+      // Biology + Home matches t3_bio_home
+      const resMatch = await router.request(
+        '/gallery/timeline?disciplines=Biology&impacts=Home'
+      );
+      expect(resMatch.status).toBe(200);
+      const pageMatch: TimelinePage = await resMatch.json();
+      expect(pageMatch.items).toHaveLength(1);
+      expect(pageMatch.items[0]?.id).toBe('t3_bio_home');
+    });
+
+    it('filters timeline by untagged disciplines', async () => {
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/timeline?disciplines=untagged');
+      expect(res.status).toBe(200);
+      const page: TimelinePage = await res.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.id).toBe('t3_untagged_item');
+    });
+
+    it('returns 400 when discipline filter is invalid', async () => {
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/timeline?disciplines=FakeDiscipline');
+      expect(res.status).toBe(400);
+      const err = await res.json();
+      expect(err.message).toContain('Invalid discipline');
+    });
+
+    it('returns 400 when impact filter is invalid', async () => {
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/timeline?impacts=FakeImpact');
+      expect(res.status).toBe(400);
+      const err = await res.json();
+      expect(err.message).toContain('Invalid impact');
+    });
+
+    it('returns accurate taxonomy counts on GET /gallery/taxonomy/summary', async () => {
+      const router = createApiRouter(mockRedis);
+      const res = await router.request('/gallery/taxonomy/summary');
+      expect(res.status).toBe(200);
+      const counts: {
+        disciplines: Record<string, number>;
+        impacts: Record<string, number>;
+      } = await res.json();
+
+      expect(counts.disciplines.Biology).toBe(1);
+      expect(counts.disciplines.Materials).toBe(1);
+      expect(counts.disciplines.Electromagnetics).toBe(1);
+      expect(counts.disciplines.Mechanics).toBe(0);
+      expect(counts.disciplines.untagged).toBe(1);
+
+      expect(counts.impacts.Home).toBe(1);
+      expect(counts.impacts.Self).toBe(1);
+      expect(counts.impacts.Friends).toBe(1);
+      expect(counts.impacts.Government).toBe(0);
+      expect(counts.impacts.untagged).toBe(1);
+    });
+
+    it('allows author to update tags on their post via POST /gallery/:id/tags', async () => {
+      const router = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false), // not mod
+        vi.fn().mockResolvedValue('alice') // author of t3_bio_home
+      );
+
+      const res = await router.request('/gallery/t3_bio_home/tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          disciplines: ['Biology', 'Materials'],
+          impacts: ['Home', 'Self'],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const updated = await getGalleryItem('t3_bio_home', mockRedis);
+      expect(updated?.disciplines).toEqual(['Biology', 'Materials']);
+      expect(updated?.disciplinesSource).toBe('poster-tagged');
+      expect(updated?.impacts).toEqual(['Home', 'Self']);
+      expect(updated?.impactsSource).toBe('poster-tagged');
+    });
+
+    it('allows moderator to override tags on any post via POST /gallery/:id/tags', async () => {
+      const router = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(true), // is mod
+        vi.fn().mockResolvedValue('mod_user')
+      );
+
+      const res = await router.request('/gallery/t3_bio_home/tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          disciplines: ['Mechanics'],
+          impacts: ['Government'],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const updated = await getGalleryItem('t3_bio_home', mockRedis);
+      expect(updated?.disciplines).toEqual(['Mechanics']);
+      expect(updated?.disciplinesSource).toBe('mod-verified');
+      expect(updated?.impacts).toEqual(['Government']);
+      expect(updated?.impactsSource).toBe('mod-verified');
+    });
+
+    it('rejects tag update when caller is neither author nor moderator', async () => {
+      const router = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false), // not mod
+        vi.fn().mockResolvedValue('stranger') // not author
+      );
+
+      const res = await router.request('/gallery/t3_bio_home/tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          disciplines: ['Arts'],
+        }),
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('rejects poster attempt to downgrade moderator-verified tags', async () => {
+      const router = createApiRouter(
+        mockRedis,
+        vi.fn().mockResolvedValue(false), // not mod
+        vi.fn().mockResolvedValue('charlie') // author of t3_em_friends (which is mod-verified)
+      );
+
+      const res = await router.request('/gallery/t3_em_friends/tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          disciplines: ['Biology'],
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const err = await res.json();
+      expect(err.message).toContain('Cannot override moderator-verified');
+    });
+
+    it('supports taxonomy filtering on unplaced items endpoint', async () => {
+      const router = createApiRouter(mockRedis);
+      const res = await router.request(
+        '/gallery/places/unplaced/items?disciplines=Biology'
+      );
+      expect(res.status).toBe(200);
+      const page: TimelinePage = await res.json();
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.id).toBe('t3_bio_home');
     });
   });
 });

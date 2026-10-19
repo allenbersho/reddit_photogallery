@@ -13,18 +13,30 @@ Instead of letting community images get lost in the endless feed scroll, **Reddi
   - **Months:** Monthly cards with photo counts and covers; tap any month to drill into its days.
   - **Days:** Clean chronological sections with sticky date headers (e.g. *Wednesday, October 14, 2026*).
   - **All Photos:** Dense, smooth, infinite-scrolling photo grid with skeleton loading placeholders.
+- **Chimera University Taxonomy Dual-Filters:**
+  - **6 Disciplines:** *Electromagnetics* ⚡, *Mechanics* ⚙️, *Biology* 🧬, *Mathematics* 📐, *Arts* 🎨, *Materials* 💎.
+  - **4 Impacts:** *Self* 👤, *Home* 🏠, *Friends* 👥, *Government* 🏛️.
+  - Distinctive pastel palette styling matching the Chimera University catalog (`#a0d8f1`, `#f7c59f`, `#a8e6cf`, `#cbb2fe`, `#f8a1d1`, `#9de3e0`).
+  - Word-boundary keyword dictionary preventing false positives, combined with flair mappings.
+  - In-modal interactive tag editor for authors and moderators.
+- **Crosspost & Repost Processing (Change A):**
+  - Ingests image crossposts with parent post resolution.
+  - $O(1)$ Redis parent hash deduplication keeping the earliest crosspost and rejecting reposts.
+  - Dual-verification reconcile: automatically purges entries if either child post or parent post is deleted/removed.
+  - Rich attribution cards on photo cards and detail modal linking to original subreddit, post, and author.
+  - Moderator controls: enable/disable crossposts, allowlist, and blocklist.
 - **Interactive Scrubber Bar:** Quick horizontal pill scrubber to jump between years and months instantly.
 - **Places & Geographic Exploration:**
   - Multi-level geographic drill-down: **Country → Region → City / Science Hub**.
   - Dedicated **Unplaced Photos** bucket for contributions awaiting location tags.
-  - Location tagging form accessible right from the post menu (**Tag Location**).
-- **Topic Filters:** One-tap filtering for **Science**, **Engineering**, **Art**, or **All**, with customizable flair mappings.
+  - Location tagging form accessible right from the post menu (**Tag Location**) and in-modal.
 - **Instant Search:** Debounced title and keyword search with multi-token intersection and suggested chips (`#telescope`, `#quantum`, `#robotics`, `#sculpture`, `#cern`).
-- **High-Res Detail Modal:** Full-bleed image preview, author credit (`u/{author}`), subreddit badge, capture date, location badge, and direct "View on Reddit" link.
+- **High-Res Detail Modal:** Full-bleed image preview, crosspost attribution card, author credit (`u/{author}`), subreddit badge, capture date, location badge, and direct "View on Reddit" link.
 - **Personal Favorites:** Bookmark photos to your personal collection, persisted in Devvit Redis.
+- **Idempotent, Batched Migration Job:** Resumable migration (`/internal/scheduler/migration`) upgrading legacy posts to Chimera tags while purging obsolete topic indexes.
 - **100% Reddit-Native & SFW:**
   - Zero external image hosting — directly displays Reddit CDN links (`i.redd.it`, `preview.redd.it`).
-  - NSFW posts are strictly excluded from capture.
+  - NSFW posts and text submissions are strictly excluded from capture.
   - Instant post deletion synchronization via `onPostDelete` triggers and background reconciliation jobs.
   - Moderator **Hide from Gallery** and **Unhide in Gallery** post actions.
 
@@ -35,9 +47,9 @@ Instead of letting community images get lost in the endless feed scroll, **Reddi
 - **Platform:** Reddit Devvit Web (`@devvit/web`, `@devvit/start`)
 - **Frontend (`src/client`):** React 19, Tailwind CSS 4, Vite
 - **Backend (`src/server`):** Node.js serverless runtime, Hono
-- **Shared (`src/shared`):** Strict TypeScript types, contracts, and date utilities
-- **Database:** Devvit Redis (sorted set timeline indexes, topic sets, geo hierarchies, search token inverted indexes)
-- **Quality & Testing:** TypeScript (strict composite project), Vitest (123 automated tests), ESLint 10, Prettier
+- **Shared (`src/shared`):** Strict TypeScript types, Chimera taxonomy constants, and date utilities
+- **Database:** Devvit Redis (sorted set timeline indexes, per-discipline/impact sets, geo hierarchies, search token inverted indexes, crosspost parent hash)
+- **Quality & Testing:** TypeScript (strict composite project), Vitest (201 automated tests), ESLint 10, Prettier
 
 ---
 

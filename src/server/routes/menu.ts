@@ -163,18 +163,38 @@ export const createMenuRouter = (
           showForm: {
             name: 'tagLocationForm',
             form: {
-              title: 'Tag Photo Location',
-              description: 'Tag the place where this photo was taken.',
-              acceptLabel: 'Save Location',
+              title: 'Tag Photo & Location',
+              description:
+                'Tag disciplines, impacts, and location for this photo.',
+              acceptLabel: 'Save Tags',
               cancelLabel: 'Cancel',
               fields: [
+                {
+                  type: 'string',
+                  name: 'disciplines',
+                  label: 'Disciplines (comma-separated)',
+                  helpText:
+                    'Options: Electromagnetics, Mechanics, Biology, Mathematics, Arts, Materials',
+                  required: false,
+                  defaultValue: item?.disciplines
+                    ? item.disciplines.join(', ')
+                    : '',
+                },
+                {
+                  type: 'string',
+                  name: 'impacts',
+                  label: 'Impacts (comma-separated)',
+                  helpText: 'Options: Self, Home, Friends, Government',
+                  required: false,
+                  defaultValue: item?.impacts ? item.impacts.join(', ') : '',
+                },
                 {
                   type: 'string',
                   name: 'location',
                   label: 'Location (City, Country or Region)',
                   helpText:
                     'e.g. Tokyo, Japan or Paris, France or Cambridge, MA',
-                  required: true,
+                  required: false,
                   defaultValue: item?.place?.raw || '',
                 },
                 {

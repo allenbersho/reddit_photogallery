@@ -4,6 +4,11 @@ import {
   runReconcileJob,
   type ReconcileResult,
 } from '../scheduler/reconcile.js';
+import {
+  runMigrationJob,
+  resetMigration,
+  type MigrationBatchResult,
+} from '../scheduler/migration.js';
 
 export const scheduler = new Hono();
 
@@ -24,5 +29,25 @@ scheduler.post('/reconcile', async (c) => {
   } catch (error) {
     console.error(`Reconcile job error: ${error}`);
     return c.json({ status: 'error', message: 'Reconcile job failed' }, 500);
+  }
+});
+
+scheduler.post('/migration', async (c) => {
+  try {
+    const result: MigrationBatchResult = await runMigrationJob();
+    return c.json(result, 200);
+  } catch (error) {
+    console.error(`Migration job error: ${error}`);
+    return c.json({ status: 'error', message: 'Migration job failed' }, 500);
+  }
+});
+
+scheduler.post('/migration/reset', async (c) => {
+  try {
+    await resetMigration();
+    return c.json({ status: 'ok', message: 'Migration reset to beginning' }, 200);
+  } catch (error) {
+    console.error(`Migration reset error: ${error}`);
+    return c.json({ status: 'error', message: 'Failed to reset migration' }, 500);
   }
 });
